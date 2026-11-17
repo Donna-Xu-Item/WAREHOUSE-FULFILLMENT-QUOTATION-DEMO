@@ -1,0 +1,146 @@
+import { describe, expect, it } from "vitest";
+import catalogJson from "../data/catalog.json";
+import { catalogGaps, mapQuote, setupList, summarize, systemRange } from "./codemap";
+import { emptySel } from "./engine";
+import type { Catalog, QuoteData } from "./types";
+
+const cat = catalogJson as unknown as Catalog;
+const header = { title: "", facility: "", effectiveDate: "2026-10-01", validDays: 90, preparedBy: "", notes: "" };
+const preset = (): QuoteData => ({ header, selections: JSON.parse(JSON.stringify(cat.defaultPreset)) });
+
+describe("mapback", () => {
+  const ms = mapQuote(cat, preset());
+  const find = (charge: string, unit: string | null, pred: (m: (typeof ms)[number]) => boolean = () => true) =>
+    ms.find(m => m.chargeId === charge && m.unitId === unit && pred(m))!;
+
+  it("every line resolves to a code or is reported as a new item", () => {
+    expect(ms.every(m => m.code || m.status === "new-item")).toBe(true);
+    expect(ms.filter(m => m.status === "new-item").every(m => m.suggestedName)).toBe(true);
+  });
+  it("floor-loaded case tiers map to HANDLING-0129 with system conditions", () => {
+    const m = find("IN-OFFLOAD", "container", x => x.conditions.some(c => c.value === "0-500"));
+    expect(m.code).toBe("HANDLING-0129");
+    expect(m.status).toBe("mapped");
+    expect(m.conditions).toEqual([
+      { key: "OFFLoad Type", value: "Floor Loaded", supported: true },
+      { key: "Case Qty", value: "0-500", supported: true },
+    ]);
+  });
+  it("palletized receiving minimum stays on the pallet code", () => {
+    expect(find("IN-OFFLOAD", "pallet", x => x.col === "min").code).toBe("HANDLING-0113");
+  });
+  it("D2C order processing maps to Business Type B2C", () => {
+    const m = find("OB-ORDER", "order", x => x.conditions.some(c => c.value === "B2C"));
+    expect(m.code).toBe("HANDLING-0093");
+    expect(m.status).toBe("mapped");
+  });
+  it("storage carries recurring and initial codes", () => {
+    const m = find("ST-STORAGE", "pallet");
+    expect([m.code, m.initialCode]).toEqual(["STORAGE INCOME-0004", "STORAGE INCOME-0017"]);
+  });
+  it("return type is flagged as a new condition on return codes", () => {
+    const m = find("RT-RETURN", "case");
+    expect(m.status).toBe("new-condition");
+    expect(m.conditions.find(c => !c.supported)?.key).toBe("Receipt Type");
+  });
+  it("pallets bill through the Material charge with a Material Type", () => {
+    const m = find("OT-PALLET-A", null);
+    expect(m).toMatchObject({ status: "mapped", code: "ACCESSORIAL-0038" });
+    expect(m.conditions).toEqual([{ key: "Material Type", value: "Grade A Pallet (40 x 48)", supported: true }]);
+  });
+  it("setup list is de-duplicated", () => {
+    const list = setupList(cat, ms);
+    const keys = list.map(i => `${i.kind}|${i.code}|${i.conditionKey ?? i.chargeId}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(summarize(ms).total).toBe(ms.length);
+  });
+});
+
+describe("each pick first / additional", () => {
+  it("uses the split-rate code with Unit Sequence", () => {
+    const s = { ...emptySel(), on: true };
+    s.units.each = { on: true, second: true };
+    const ms = mapQuote(cat, { header, selections: { "OB-PICK": s } });
+    expect(ms.map(m => [m.code, m.status, m.conditions[0]?.value])).toEqual([["HANDLING-0062", "mapped", "first"], ["HANDLING-0062", "mapped", "additional"]]);
+  });
+});
+
+describe("helpers", () => {
+  it("range labels", () => {
+    expect(systemRange("0 - 500 cases")).toBe("0-500");
+    expect(systemRange("Over 2,500 cases")).toBe("over 2500");
+    expect(systemRange('55" - 60"')).toBe('55" - 60"');
+  });
+  it("catalog gaps list only real gaps", () => {
+    const gaps = catalogGaps(cat);
+    expect(gaps.some(g => g.chargeId === "VA-BRANDED" && g.kind === "new-item")).toBe(true);
+    expect(gaps.some(g => g.chargeId === "OT-PALLET-A")).toBe(false);
+    expect(gaps.some(g => g.code === "HANDLING-0129" && g.detail === "Case Qty")).toBe(false);
+  });
+});
+
+describe("standard charge template", async () => {
+  const { buildProposal } = await import("./proposal");
+  const data = (): QuoteData => ({ header, selections: JSON.parse(JSON.stringify(cat.standardTemplate.selections)) });
+  it("covers all 44 Final Common Billing Items (primary, initial-storage or alternate code)", () => {
+    expect(cat.commonItems).toHaveLength(44);
+    const ms = mapQuote(cat, data());
+    const used = new Set(ms.flatMap(m => [m.code, m.initialCode, ...m.altCodes]).filter(Boolean));
+    expect(cat.commonItems.filter(c => !used.has(c.code)).map(c => c.code)).toEqual([]);
+  });
+  it("covers the 24 suggested additions (2026-10-01) with mapped lines", () => {
+    const suggested = ["HANDLING-0194", "ACCESSORIAL-0014", "HANDLING-0126", "HANDLING-0040", "HANDLING-0011", "HANDLING-0023",
+      "HANDLING-0157", "HANDLING-0081", "STORAGE INCOME-0010", "ACCESSORIAL-0010", "HANDLING-0085", "HANDLING-0155",
+      "HANDLING-0142", "HANDLING-0138", "ACCESSORIAL-0001", "ACCESSORIAL-0037", "RMS-002", "RMS-006", "ACCESSORIAL-0011",
+      "HANDLING-0208", "HANDLING-0184", "RELABELING", "ACC-0003", "HANDLING-0250", "STORAGE INCOME-0027"];
+    const ms = mapQuote(cat, data());
+    const mapped = new Set(ms.filter(m => m.status === "mapped").flatMap(m => [m.code, m.initialCode, ...m.altCodes]).filter(Boolean));
+    expect(suggested.filter(c => !mapped.has(c))).toEqual([]);
+  });
+  it("renders the standard rate sheet: existing items mapped, new items listed for billing setup", () => {
+    const rows = buildProposal(cat, data()).flatMap(s => s.rows).filter(r => r.rate);
+    expect(rows.length).toBeGreaterThan(43);
+    const ms = mapQuote(cat, data());
+    const newIds = new Set(Object.keys(cat.mapback.newItems));
+    // every line of a charge that has a system code maps cleanly; the rest are the new items to create first
+    expect(ms.filter(m => !newIds.has(m.chargeId) && m.status !== "mapped").map(m => m.lineKey)).toEqual([]);
+    const setup = setupList(cat, ms);
+    expect(setup.every(x => x.kind === "new-item" && newIds.has(x.chargeId))).toBe(true);
+    expect(setup.map(x => x.chargeId).sort()).toEqual(
+      ["CT-CARDFEE", "CT-EARLYTERM", "CT-ESCALATOR", "CT-OFFBOARD", "OB-ORDERMOD", "OT-CARRIERSUR", "ST-AGED", "ST-HAZMAT", "SU-DIMS", "TC-ORDERFEE", "TC-REPORT"]);
+  });
+  it("shows percent and plain-number charges in their own format", () => {
+    const sec = (id: string) => buildProposal(cat, data()).find(s => s.id === id)!.rows;
+    const row = (id: string, name: string) => sec(id).find(r => r.service === name)!;
+    expect(row("terms", "Annual rate escalator").rate).toEqual({ kind: "pct", p: 0.03 });
+    expect(row("terms", "Early termination fee").rate).toEqual({ kind: "num", p: 3 });
+    expect(row("terms", "Early termination fee").unit).toBe("months of the monthly minimum");
+  });
+  it("prices palletized containers flat only when flatOtherwise is on", () => {
+    const d = data();
+    const pal = () => mapQuote(cat, d).filter(m => m.lineKey.includes("container|Palletized"));
+    expect(pal().map(m => [m.code, m.price])).toEqual([["HANDLING-0126", 392.5]]);
+    d.selections["IN-OFFLOAD"].units.container.flatOtherwise = false;
+    expect(pal()).toHaveLength(0);
+  });
+  it("keeps the excess-case line right under the container tiers", () => {
+    const inbound = buildProposal(cat, data())[0].rows.map(r => r.service).filter(Boolean);
+    expect(inbound.indexOf("Each case over 2,500 (floor-loaded container)")).toBe(inbound.lastIndexOf("Offload / Receiving") + 1);
+  });
+});
+
+describe("catalog translations", () => {
+  it("translates every new charge, category and rate-sheet section into zh / ja / es", async () => {
+    const dicts = await Promise.all(["zh", "ja", "es"].map(l => import(`../i18n/catalog.${l}.json`).then(m => m.default as Record<string, string>)));
+    const all = cat.categories.flatMap(c => c.charges.map(ch => ({ ch, c })));
+    const fresh = all.filter(({ ch }) => cat.mapback.newItems[ch.id]);
+    const strings = new Set<string>();
+    for (const { ch, c } of fresh) {
+      strings.add(ch.name); strings.add(ch.desc); strings.add(c.name);
+      if (ch.kind === "simple") strings.add(ch.unit);
+    }
+    for (const s of cat.proposal.sections) strings.add(s.label);
+    const missing = dicts.flatMap((d, i) => [...strings].filter(s => !d[s]).map(s => `${["zh", "ja", "es"][i]}: ${s}`));
+    expect(missing).toEqual([]);
+  });
+});
