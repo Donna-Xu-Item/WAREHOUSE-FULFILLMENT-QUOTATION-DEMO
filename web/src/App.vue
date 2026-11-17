@@ -2,6 +2,8 @@
 import { computed, nextTick, onMounted, ref, watchEffect } from "vue";
 import itemLogoDark from "./assets/brand/item-white-logo.svg";
 import itemLogoLight from "./assets/brand/item-logo-fullcolor-blacktxt.svg";
+import NewQuoteDrawer from "./components/NewQuoteDrawer.vue";
+import QuoteWorkflow from "./components/QuoteWorkflow.vue";
 import TrainingAssistant from "./components/TrainingAssistant.vue";
 import ChargeCard from "./components/ChargeCard.vue";
 import ChargeCodeMapping from "./components/ChargeCodeMapping.vue";
@@ -15,7 +17,7 @@ import { LANGS, type Lang } from "./i18n";
 import { provideApp } from "./lib/context";
 import { signOut } from "./lib/remote";
 import { catalog, createStore, type Store } from "./lib/store";
-import type { Charge, QuoteStatus } from "./lib/types";
+import type { Charge } from "./lib/types";
 
 // server mode passes a store built from the API bootstrap (main.ts); otherwise the browser-only store
 const props = defineProps<{ store?: Store }>();
@@ -23,6 +25,10 @@ const store = props.store ?? createStore();
 const { T } = provideApp(store);
 const st = store.state;
 const drawer = ref<"" | "customers" | "versions" | "history" | "mapping">("");
+const creating = ref(false);
+const creatingClone = ref(false);
+const creatingCustomer = ref<string>();
+function newQuote(customerId?: string) { creatingClone.value = false; creatingCustomer.value = customerId; drawer.value = ""; creating.value = true; }
 const saving = ref(false);
 const note = ref("");
 const search = ref("");
@@ -50,7 +56,7 @@ onMounted(() => { if (location.hash) nextTick(() => document.querySelector(locat
 
 const facilities = (catalog.categories[1].charges[0] as { conds: { id: string; values: string[] }[] }).conds.find(c => c.id === "facility")!.values;
 const customerQuotes = computed(() => store.state.quotes.filter(q => q.customerId === store.customer.value?.id));
-const statuses: QuoteStatus[] = ["draft", "sent", "accepted", "archived"];
+
 
 // ---- entry filters
 const matches = (c: Charge) => {
@@ -81,7 +87,7 @@ function loadTemplate() {
   setTimeout(() => (flash.value = ""), 2500);
 }
 const setLang = (l: Lang) => (st.prefs.lang = l);
-const h = computed(() => store.quote.value!.draft.header);
+const h = computed(() => store.data.value!.header);
 const touch = () => store.touch();
 const toggleTheme = () => (st.prefs.theme = st.prefs.theme === "light" ? "dark" : "light");
 const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : itemLogoDark));
@@ -98,19 +104,14 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
       <span class="lbl">{{ T.t("h.customer") }}</span>{{ store.customer.value?.company ?? T.t("h.selectCustomer") }}
     </button>
     <template v-if="store.quote.value">
-      <label class="field">
+      <label data-training="quotes" class="field">
         <span class="lbl">{{ T.t("h.quote") }}</span>
         <select class="input qsel" :value="store.quote.value.id" @change="store.openQuote(($event.target as HTMLSelectElement).value)">
           <option v-for="q in customerQuotes" :key="q.id" :value="q.id">{{ q.number }}{{ q.draft.header.title ? ` · ${q.draft.header.title}` : "" }}</option>
         </select>
       </label>
-      <label class="field">
-        <span class="lbl">{{ T.t("h.status") }}</span>
-        <select class="input" :value="store.quote.value.status" @change="store.setStatus(($event.target as HTMLSelectElement).value as QuoteStatus)">
-          <option v-for="s in statuses" :key="s" :value="s">{{ T.t(`status.${s}`) }}</option>
-        </select>
-      </label>
-      <button class="btn sm" @click="store.createQuote(store.customer.value!.id)">{{ T.t("h.newQuote") }}</button>
+      <QuoteWorkflow />
+      <button data-training="new" class="btn sm" @click="newQuote(store.customer.value!.id)">{{ T.t("h.newQuote") }}</button>
     </template>
     <span class="sp"></span>
     <template v-if="store.quote.value">
@@ -118,7 +119,8 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
         {{ store.dirty.value ? T.t("v.unsaved") : T.t("v.upToDate", { n: store.latestVersion.value?.v ?? 0 }) }}
       </span>
       <button data-training="save" class="btn primary sm" :disabled="!store.dirty.value || store.readOnly.value" @click="saving = true">{{ T.t("h.saveVersion") }}</button>
-      <button class="btn sm" @click="drawer = 'versions'">{{ T.t("h.versions") }} ({{ store.quote.value.versions.length }})</button>
+      <label data-training="version-select" class="field"><span class="lbl">{{ st.prefs.lang === 'zh' ? '报价版本' : 'Quote version' }}</span><select class="input" :value="st.viewingVersion ?? 'draft'" @change="store.viewVersion(($event.target as HTMLSelectElement).value === 'draft' ? null : Number(($event.target as HTMLSelectElement).value))"><option value="draft">{{ st.prefs.lang === 'zh' ? '当前报价' : 'Current quote' }}</option><option v-for="v in store.quote.value.versions" :key="v.v" :value="v.v">v{{ v.v }} · {{ v.note || v.savedAt.slice(0,10) }}</option></select></label>
+      <button data-training="versions" class="btn sm" @click="drawer = 'versions'">{{ T.t("h.versions") }} ({{ store.quote.value.versions.length }})</button>
       <button class="btn sm" @click="drawer = 'mapping'">{{ T.t("m.button") }}</button>
     </template>
     <button class="btn sm" @click="drawer = 'history'">{{ T.t("h.history") }}</button>
@@ -133,12 +135,13 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
     <ThemeToggle :theme="st.prefs.theme" :label="st.prefs.theme === 'light' ? T.t('h.nightView') : T.t('h.dayView')" @toggle="toggleTheme" />
   </header>
 
-  <div v-if="store.readOnly.value" class="banner no-print" role="status">
+  <div v-if="st.viewingVersion !== null" class="banner no-print" role="status">
     {{ T.t("e.readOnly", { v: st.viewingVersion! }) }}
     <button class="btn sm" @click="store.viewVersion(null)">{{ T.t("e.backToDraft") }}</button>
-    <button class="btn sm primary" @click="store.restoreVersion(st.viewingVersion!)">{{ T.t("e.restoreDraft") }}</button>
+    <button class="btn sm primary" :disabled="store.quote.value?.status === 'accepted' || store.quote.value?.status === 'archived'" @click="store.restoreVersion(st.viewingVersion!)">{{ T.t("e.restoreDraft") }}</button>
   </div>
 
+  <div v-if="store.quote.value && ['accepted', 'archived'].includes(store.quote.value.status)" class="banner no-print">{{ st.prefs.lang === 'zh' ? '报价已锁定。接受版本保留用于业务确认；Demo 未同步 BNP，归档不影响正式 Price List。' : 'Quotation locked. The accepted version is retained for review. BNP is not connected; archiving does not change a formal price list.' }}</div>
   <main v-if="!store.quote.value" id="main" class="empty no-print">
     <p>{{ T.t("h.noQuote") }}</p>
     <button class="btn primary" @click="drawer = 'customers'">{{ T.t("h.selectCustomer") }}</button>
@@ -154,6 +157,7 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
 
     <main id="main">
       <template v-if="!proposalOnly">
+        <p v-if="store.quote.value.clonedFrom" class="hint no-print">{{ st.prefs.lang === 'zh' ? '复制来源 Price List（Demo）：' : 'Cloned from price list (demo): ' }}{{ store.quote.value.clonedFrom.number }} · {{ store.quote.value.clonedFrom.effectiveDate }} — {{ store.quote.value.clonedFrom.endDate || (st.prefs.lang === 'zh' ? '无结束日期' : 'No end date') }}</p>
         <section data-training="details" class="details no-print" aria-labelledby="qd">
           <button class="dhead" :aria-expanded="detailsOpen" @click="detailsOpen = !detailsOpen">
             <span id="qd" class="dt">{{ T.t("q.details") }}</span>
@@ -233,8 +237,9 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
     <span v-if="st.lastSaved && !st.user" class="hint">{{ T.t("v.autosaved") }}</span>
   </footer>
 
-  <TrainingAssistant @navigate="target => { if (target === 'details') detailsOpen = true; if (target !== 'customer' && target !== 'save') proposalOnly = false; }" />
-  <CustomersDrawer v-if="drawer === 'customers'" @close="drawer = ''" />
+  <TrainingAssistant :docked-left="creating || !!drawer" @navigate="target => { if (target === 'create' || target === 'clone') { newQuote(store.customer.value?.id); creatingClone = target === 'clone'; } else { creating = false; } if (target === 'details') detailsOpen = true; if (target !== 'customer' && target !== 'save') proposalOnly = false; }" />
+  <NewQuoteDrawer v-if="creating" :customer-id="creatingCustomer" :start-clone="creatingClone" :key="String(creatingClone)" @close="creating = false" />
+  <CustomersDrawer v-if="drawer === 'customers'" @create="newQuote" @close="drawer = ''" />
   <VersionsDrawer v-if="drawer === 'versions' && store.quote.value" @close="drawer = ''" />
   <HistoryDrawer v-if="drawer === 'history'" @close="drawer = ''" />
   <Drawer v-if="drawer === 'mapping' && store.data.value" :title="`${T.t('m.title')} · ${store.quote.value?.number}`" wide @close="drawer = ''">

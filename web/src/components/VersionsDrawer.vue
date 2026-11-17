@@ -64,7 +64,7 @@ function restore(v: number) {
         <td class="hint">{{ T.t("v.lines", { n: v.lineCount }) }}<div v-if="v.mapping">{{ T.t("m.savedMapped", { mapped: v.mapping.summary.mapped, total: v.mapping.summary.total }) }}</div></td>
         <td class="acts">
           <button class="btn sm" @click="view(v.v)">{{ T.t("c.view") }}</button>
-          <button class="btn sm" @click="restore(v.v)">{{ T.t("e.restoreDraft") }}</button>
+          <button class="btn sm" :disabled="['accepted', 'archived'].includes(q.status)" @click="restore(v.v)">{{ T.t("e.restoreDraft") }}</button>
         </td>
       </tr>
     </tbody></table>

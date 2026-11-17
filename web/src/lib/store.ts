@@ -3,11 +3,12 @@
 // and every change is written to the API in order (drafts debounced, with If-Match so concurrent editors never overwrite each other).
 import { computed, reactive, watch } from "vue";
 import catalogJson from "../data/catalog.json";
+import { demoPriceLists } from "./priceLists";
 import { mapQuote, summarize } from "./codemap";
 import { emptySel, quoteLines } from "./engine";
 import type { Lang } from "../i18n";
 import { api, ApiError, type Bootstrap, type User } from "./remote";
-import type { Catalog, ChargeSel, Customer, HistoryEvent, HistoryType, Quote, QuoteData, QuoteStatus } from "./types";
+import type { Catalog, ChargeSel, Customer, HistoryEvent, HistoryType, Quote, QuoteData, QuoteStatus, PriceList } from "./types";
 
 export const catalog = catalogJson as unknown as Catalog;
 
@@ -135,25 +136,33 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
     state.quotes.push(q);
   }
 
+  // Synthetic price-list fixtures are separate from quote versions. Add only missing demo fixtures.
+  const priceLists = boot ? [] : repo.load<PriceList[]>("priceLists", []);
+  if (!boot) for (const customer of state.customers) {
+    if (!priceLists.some(p => p.customerId === customer.id)) priceLists.push(...demoPriceLists(customer, newQuoteData()));
+  }
+  const lists = reactive(priceLists);
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   const persist = () => {
     if (!remote) {
       repo.save("customers", state.customers);
       repo.save("quotes", state.quotes);
+      repo.save("priceLists", lists);
       repo.save("history", state.history.slice(0, 500));
     }
     repo.save("prefs", state.prefs);
     repo.save("current", state.currentQuoteId);
     state.lastSaved = now();
   };
-  watch(() => [state.customers, state.quotes, state.history, state.prefs, state.currentQuoteId], () => {
+  watch(() => [state.customers, state.quotes, lists, state.history, state.prefs, state.currentQuoteId], () => {
     clearTimeout(timer);
     timer = setTimeout(persist, 400);
   }, { deep: true });
 
   const quote = computed(() => state.quotes.find(q => q.id === state.currentQuoteId) ?? null);
   const customer = computed(() => state.customers.find(c => c.id === quote.value?.customerId) ?? null);
-  const readOnly = computed(() => state.viewingVersion != null);
+  const readOnly = computed(() => state.viewingVersion != null || quote.value?.status === "accepted" || quote.value?.status === "archived");
   const data = computed<QuoteData | null>(() => {
     const q = quote.value;
     if (!q) return null;
@@ -270,15 +279,27 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
 
   return {
     state, quote, customer, readOnly, data, latestVersion, dirty, sel, touch, log,
+    priceLists: lists,
     openQuote(id: string) {
       state.currentQuoteId = id;
       state.viewingVersion = null;
       const q = quote.value;
       if (q) log("view", { quoteId: q.id, customerId: q.customerId });
     },
-    createQuote(customerId: string) {
+    createQuote(customerId: string, options?: { blank?: boolean; priceListId?: string }) {
+      if (!state.customers.some(c => c.id === customerId)) throw new Error("Customer not found");
+      const source = options?.priceListId ? lists.find(p => p.id === options.priceListId && p.customerId === customerId) : undefined;
+      if (options?.priceListId && !source) throw new Error("Price list does not belong to this customer");
+      if (remote && options?.priceListId) throw new Error("Price-list cloning requires a connected price-list API");
+      const draft = newQuoteData("", !!options?.blank);
+      if (source) {
+        draft.selections = clone(source.data.selections);
+        draft.header.facility = source.data.header.facility;
+        draft.header.title = `Quotation from ${source.number}`;
+      }
       const q: Quote = { id: uid(), number: nextNumber(), customerId, createdAt: now(), updatedAt: now(), status: "draft",
-        draft: newQuoteData(), versions: [] };
+        draft, versions: [],
+        ...(source ? { clonedFrom: { priceListId: source.id, number: source.number, effectiveDate: source.effectiveDate, endDate: source.endDate, demo: source.demo } } : {}) };
       state.quotes.unshift(q);
       state.currentQuoteId = q.id;
       state.viewingVersion = null;
@@ -304,6 +325,7 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
       const created: Customer = { id: uid(), code: "", contact: "", phone: "", email: "", address: "", city: "", state: "", zip: "",
         channel: "Both", createdAt: now(), ...c } as Customer;
       state.customers.unshift(created);
+      if (!remote) lists.push(...demoPriceLists(created, newQuoteData()));
       log("customer-create", { customerId: created.id, detail: created.company, quoteId: undefined });
       if (remote) {
         const { createdAt: _c, ...fields } = created;
@@ -312,6 +334,7 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
       return created;
     },
     saveVersion(note: string) {
+      if (readOnly.value) throw new Error("Quote is read-only");
       const q = quote.value!;
       const v = (q.versions.at(-1)?.v ?? 0) + 1;
       // snapshot the charge-code mapback with the version, so billing can be configured from exactly what was saved
@@ -336,6 +359,7 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
       state.viewingVersion = v;
     },
     restoreVersion(v: number) {
+      if (["accepted", "archived"].includes(quote.value!.status)) throw new Error("Quote is locked");
       const q = quote.value!;
       const ver = q.versions.find(x => x.v === v);
       if (!ver) return;
@@ -357,8 +381,21 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
     },
     setStatus(s: QuoteStatus) {
       const q = quote.value!;
+      if (s === q.status) return;
+      const allowed: Record<QuoteStatus, QuoteStatus[]> = { draft: ['sent', 'archived'], sent: ['draft', 'accepted', 'archived'], accepted: ['archived'], archived: [] };
+      if (!allowed[q.status].includes(s)) throw new Error("Invalid status transition");
+      if (s === 'sent' || s === 'accepted') {
+        const version = q.versions.at(-1);
+        if (!version || dirty.value) throw new Error("Save the final quote version first");
+        if (s === 'sent') q.sentVersion = version.v;
+        else {
+          if (q.sentVersion !== version.v) throw new Error("Accept the sent version, or return to draft and send again");
+          q.acceptedVersion = version.v;
+        }
+      }
       q.status = s;
-      log("status", { detail: s });
+      touch();
+      log("status", { detail: `${s}${s === 'sent' ? ` · v${q.sentVersion}` : s === 'accepted' ? ` · v${q.acceptedVersion}` : ''}` });
       remote?.enqueue(async () => remote.afterWrite(q.id, (await api("PATCH", `/v1/quotes/${q.id}`, { status: s }, remote.tagged(q.id))).etag));
     },
   };

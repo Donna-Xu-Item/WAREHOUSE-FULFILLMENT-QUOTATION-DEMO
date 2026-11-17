@@ -5,7 +5,7 @@ import { dateText } from "../lib/format";
 import type { Customer } from "../lib/types";
 import Drawer from "./Drawer.vue";
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; create: [customerId: string] }>();
 const { store, T } = useApp();
 const query = ref("");
 const expanded = ref<string | null>(store.customer.value?.id ?? null);
@@ -37,8 +37,7 @@ function open(id: string) {
   emit("close");
 }
 function create(customerId: string) {
-  store.createQuote(customerId);
-  emit("close");
+  emit("create", customerId);
 }
 const fields = ["company", "code", "contact", "phone", "email", "address", "city", "state", "zip"] as const;
 </script>

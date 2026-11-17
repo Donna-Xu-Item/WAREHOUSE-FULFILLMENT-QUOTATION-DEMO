@@ -84,9 +84,16 @@ export interface QuoteData { header: QuoteHeader; selections: Record<string, Cha
 export interface VersionMapping { summary: { total: number; mapped: number; newCondition: number; newItem: number }; lines: unknown[] }
 export interface Version { v: number; savedAt: string; note: string; data: QuoteData; lineCount: number; mapping?: VersionMapping }
 export type QuoteStatus = "draft" | "sent" | "accepted" | "archived";
+export interface PriceList {
+  id: string; customerId: string; number: string; effectiveDate: string; endDate: string | null;
+  data: QuoteData; demo: boolean;
+}
+export interface QuoteOrigin { priceListId: string; number: string; effectiveDate: string; endDate: string | null; demo: boolean }
 export interface Quote {
   id: string; number: string; customerId: string; createdAt: string; updatedAt: string; status: QuoteStatus;
   draft: QuoteData; versions: Version[];
+  clonedFrom?: QuoteOrigin;
+  sentVersion?: number; acceptedVersion?: number;
   templateVersion?: string;   // Standard Charge Template quote: catalog template version it holds
 }
 export interface Customer {
