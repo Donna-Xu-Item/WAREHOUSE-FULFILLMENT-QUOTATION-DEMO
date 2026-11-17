@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watchEffect } from "vue";
 import itemLogoDark from "./assets/brand/item-white-logo.svg";
 import itemLogoLight from "./assets/brand/item-logo-fullcolor-blacktxt.svg";
+import BillingItemAssistant from "./components/BillingItemAssistant.vue";
 import NewQuoteDrawer from "./components/NewQuoteDrawer.vue";
 import QuoteWorkflow from "./components/QuoteWorkflow.vue";
 import TrainingAssistant from "./components/TrainingAssistant.vue";
@@ -141,7 +142,9 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
     <button class="btn sm primary" :disabled="store.quote.value?.status === 'accepted' || store.quote.value?.status === 'archived'" @click="store.restoreVersion(st.viewingVersion!)">{{ T.t("e.restoreDraft") }}</button>
   </div>
 
-  <div v-if="store.quote.value && ['accepted', 'archived'].includes(store.quote.value.status)" class="banner no-print">{{ st.prefs.lang === 'zh' ? '报价已锁定。接受版本保留用于业务确认；Demo 未同步 BNP，归档不影响正式 Price List。' : 'Quotation locked. The accepted version is retained for review. BNP is not connected; archiving does not change a formal price list.' }}</div>
+  <div v-if="store.quote.value && ['accepted', 'archived'].includes(store.quote.value.status)" class="banner no-print">{{ st.prefs.lang === 'zh' ? '报价已锁定。Archived 表示报价完成并发布；Demo 仅模拟同步到本地 Price List，未连接真实 BNP。' : 'Quotation locked. Archived means completed and published. The demo simulates publication to local price lists; real BNP is not connected.' }}</div>
+  <div v-if="store.quote.value?.status === 'archived' && !store.quote.value.publishedPriceListId" class="banner no-print" role="status">{{ st.prefs.lang === 'zh' ? '历史归档没有发布记录，不能据此认定已同步正式 Price List，请人工核查。' : 'This legacy archive has no publication record. Verify it before assuming a formal price list was synchronized.' }}</div>
+  <div v-if="store.quote.value?.publishedPriceListId" class="banner no-print" role="status">{{ st.prefs.lang === 'zh' ? '已完成发布模拟 · Price List：' : 'Publication simulated · Price List: ' }}{{ store.priceLists.find(p => p.id === store.quote.value?.publishedPriceListId)?.number }} · {{ st.prefs.lang === 'zh' ? '未修改旧 Price List 的结束日期' : 'Previous price-list end dates are unchanged' }}</div>
   <main v-if="!store.quote.value" id="main" class="empty no-print">
     <p>{{ T.t("h.noQuote") }}</p>
     <button class="btn primary" @click="drawer = 'customers'">{{ T.t("h.selectCustomer") }}</button>
@@ -195,6 +198,8 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
           <span v-if="flash" class="tag ok" role="status">{{ flash }}</span>
         </div>
 
+        <BillingItemAssistant />
+
         <div data-training="charges" class="filters no-print">
           <input class="input search" type="search" v-model="search" :placeholder="T.t('e.search')" :aria-label="T.t('e.search')" />
           <div class="chips" role="group" aria-label="Channel">
@@ -213,6 +218,10 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
             <span v-if="c.selected" class="tag">{{ T.t("e.selected", { n: c.selected }) }}</span>
           </div>
           <p class="muted cat-desc">{{ T.tc(c.cat.desc) }}</p>
+          <div v-for="request in store.billingRequests.filter(r => r.quoteId === store.quote.value?.id && r.categoryId === c.cat.id)" :key="request.id" class="note info">
+            <strong>{{ request.fields.name }} · {{ request.fields.code }}</strong> · {{ request.status }}
+            <p>{{ st.prefs.lang === 'zh' ? '新项目设计申请 · 尚未接入计费，不计入报价或导出。' : 'New-item design request · not integrated into billing, quoted rates or exports.' }}</p>
+          </div>
           <div class="list">
             <ChargeCard v-for="ch in c.main" :key="ch.id" :charge="ch" />
           </div>
@@ -237,7 +246,7 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
     <span v-if="st.lastSaved && !st.user" class="hint">{{ T.t("v.autosaved") }}</span>
   </footer>
 
-  <TrainingAssistant :docked-left="creating || !!drawer" @navigate="target => { if (target === 'create' || target === 'clone') { newQuote(store.customer.value?.id); creatingClone = target === 'clone'; } else { creating = false; } if (target === 'details') detailsOpen = true; if (target !== 'customer' && target !== 'save') proposalOnly = false; }" />
+  <TrainingAssistant @navigate="target => { if (target === 'create' || target === 'clone') { newQuote(store.customer.value?.id); creatingClone = target === 'clone'; } else { creating = false; } if (target === 'details') detailsOpen = true; if (target !== 'customer' && target !== 'save') proposalOnly = false; }" />
   <NewQuoteDrawer v-if="creating" :customer-id="creatingCustomer" :start-clone="creatingClone" :key="String(creatingClone)" @close="creating = false" />
   <CustomersDrawer v-if="drawer === 'customers'" @create="newQuote" @close="drawer = ''" />
   <VersionsDrawer v-if="drawer === 'versions' && store.quote.value" @close="drawer = ''" />

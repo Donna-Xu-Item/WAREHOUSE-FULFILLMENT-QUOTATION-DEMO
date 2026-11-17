@@ -3,6 +3,7 @@
 // and every change is written to the API in order (drafts debounced, with If-Match so concurrent editors never overwrite each other).
 import { computed, reactive, watch } from "vue";
 import catalogJson from "../data/catalog.json";
+import { canPropose, canApprove, missingFields, assertRequestReady, type BillingRequest, type DemoRole } from "./billingRequests";
 import { demoPriceLists } from "./priceLists";
 import { mapQuote, summarize } from "./codemap";
 import { emptySel, quoteLines } from "./engine";
@@ -142,6 +143,8 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
     if (!priceLists.some(p => p.customerId === customer.id)) priceLists.push(...demoPriceLists(customer, newQuoteData()));
   }
   const lists = reactive(priceLists);
+  const billingRequests = reactive(repo.load<BillingRequest[]>("billingRequests", []));
+  const demoAccess = reactive({ role: 'quote_user' as DemoRole });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const persist = () => {
@@ -149,13 +152,14 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
       repo.save("customers", state.customers);
       repo.save("quotes", state.quotes);
       repo.save("priceLists", lists);
+      repo.save("billingRequests", billingRequests);
       repo.save("history", state.history.slice(0, 500));
     }
     repo.save("prefs", state.prefs);
     repo.save("current", state.currentQuoteId);
     state.lastSaved = now();
   };
-  watch(() => [state.customers, state.quotes, lists, state.history, state.prefs, state.currentQuoteId], () => {
+  watch(() => [state.customers, state.quotes, lists, billingRequests, state.history, state.prefs, state.currentQuoteId], () => {
     clearTimeout(timer);
     timer = setTimeout(persist, 400);
   }, { deep: true });
@@ -279,7 +283,26 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
 
   return {
     state, quote, customer, readOnly, data, latestVersion, dirty, sel, touch, log,
-    priceLists: lists,
+    priceLists: lists, billingRequests, demoAccess,
+    submitBillingRequest(input: Omit<BillingRequest, 'id' | 'quoteId' | 'status' | 'createdBy'>) {
+      if (remote || !canPropose(demoAccess.role) || quote.value?.status !== 'draft') throw new Error('Not permitted');
+      if (missingFields(input).length) throw new Error('Complete required fields');
+      const code = input.fields.code.trim().toLowerCase(), name = input.fields.name.trim().toLowerCase();
+      const charges = catalog.categories.flatMap(c => c.charges);
+      if (charges.some(c => c.id.toLowerCase() === code || c.codes.some(x => x.toLowerCase() === code) || c.name.toLowerCase() === name) || Object.keys(catalog.systemCodes).some(x => x.toLowerCase() === code) || billingRequests.some(r => r.fields.code.trim().toLowerCase() === code)) throw new Error('Duplicate item or request');
+      const request: BillingRequest = { ...clone(input), id: uid(), quoteId: quote.value.id, status: 'submitted', createdBy: `demo:${demoAccess.role}` };
+      billingRequests.push(request); touch(); return request;
+    },
+    approveBillingRequest(id: string) {
+      const r = billingRequests.find(r => r.id === id);
+      if (remote || !r || !canApprove(demoAccess.role) || r.createdBy === `demo:${demoAccess.role}` || r.status !== 'submitted' || missingFields(r).length) throw new Error('Not permitted');
+      r.status = 'approved'; r.approvedBy = `demo:${demoAccess.role}`;
+    },
+    verifyBillingRequest(id: string, factEvidence: string, testEvidence: string) {
+      const r = billingRequests.find(r => r.id === id);
+      if (remote || !r || demoAccess.role !== 'integration_engineer' || r.status !== 'approved' || !factEvidence.trim() || !testEvidence.trim()) throw new Error('Evidence required');
+      r.factEvidence = factEvidence.trim(); r.testEvidence = testEvidence.trim(); r.verifiedBy = `demo:${demoAccess.role}`; r.status = 'ready';
+    },
     openQuote(id: string) {
       state.currentQuoteId = id;
       state.viewingVersion = null;
@@ -382,7 +405,7 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
     setStatus(s: QuoteStatus) {
       const q = quote.value!;
       if (s === q.status) return;
-      const allowed: Record<QuoteStatus, QuoteStatus[]> = { draft: ['sent', 'archived'], sent: ['draft', 'accepted', 'archived'], accepted: ['archived'], archived: [] };
+      const allowed: Record<QuoteStatus, QuoteStatus[]> = { draft: ['sent'], sent: ['draft', 'accepted'], accepted: ['archived'], archived: [] };
       if (!allowed[q.status].includes(s)) throw new Error("Invalid status transition");
       if (s === 'sent' || s === 'accepted') {
         const version = q.versions.at(-1);
@@ -392,6 +415,23 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
           if (q.sentVersion !== version.v) throw new Error("Accept the sent version, or return to draft and send again");
           q.acceptedVersion = version.v;
         }
+      }
+      if (s === 'archived') {
+        if (remote) throw new Error('Price-list publication API is not connected');
+        const requests = billingRequests.filter(r => r.quoteId === q.id);
+        if (demoAccess.role !== 'pricing_publisher') throw new Error('Pricing Publisher required');
+        requests.forEach(assertRequestReady);
+        // This prototype has no new-item provisioning/quote-rate API. Never represent a design packet as a published billable item.
+        if (requests.length) throw new Error('New-item designs require real Billing Engine and quotation-rate integration before publication');
+        const accepted = q.versions.find(v => v.v === q.acceptedVersion);
+        if (!accepted) throw new Error('Accepted version required');
+        // Local publication simulation: idempotent snapshot, no automatic invalidation of old price lists.
+        let published = lists.find(p => p.sourceQuoteId === q.id && p.sourceVersion === accepted.v);
+        if (!published) {
+          published = { id: uid(), customerId: q.customerId, number: `${state.customers.find(c => c.id === q.customerId)?.code || 'DEMO'}-PL-${q.number}-v${accepted.v}`, effectiveDate: accepted.data.header.effectiveDate, endDate: null, data: clone(accepted.data), demo: true, sourceQuoteId: q.id, sourceVersion: accepted.v, newItemDesigns: clone(requests) };
+          lists.push(published);
+        }
+        q.publishedPriceListId = published.id; q.publishedAt = now();
       }
       q.status = s;
       touch();

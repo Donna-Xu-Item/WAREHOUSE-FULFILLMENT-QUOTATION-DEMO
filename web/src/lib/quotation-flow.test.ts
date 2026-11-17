@@ -32,7 +32,7 @@ describe('new quote and price-list clone', () => {
     expect(s.priceLists.filter(p => p.customerId === c.id)).toHaveLength(2);
   });
 });
-describe('manual lifecycle does not sync price lists', () => {
+describe('manual lifecycle publishes local price lists at archive', () => {
   it('requires a saved sent version, locks acceptance, and preserves source lists on archive', () => {
     const s = fresh(); s.createQuote(s.state.customers[0]!.id, { blank: true });
     const before = JSON.stringify(s.priceLists);
@@ -44,8 +44,14 @@ describe('manual lifecycle does not sync price lists', () => {
     expect(s.quote.value?.acceptedVersion).toBe(1);
     expect(() => s.saveVersion('edit accepted')).toThrow();
     expect(() => s.restoreVersion(1)).toThrow();
-    s.setStatus('archived');
+    expect(() => s.setStatus('archived')).toThrow();
     expect(JSON.stringify(s.priceLists)).toBe(before);
+    s.demoAccess.role = 'pricing_publisher';
+    s.setStatus('archived');
+    expect(JSON.stringify(s.priceLists.slice(0,-1))).toBe(before);
+    expect(s.priceLists.at(-1)).toMatchObject({sourceQuoteId: s.quote.value!.id, sourceVersion:1, demo:true});
+    expect(s.priceLists.at(-1)!.data).toEqual(s.quote.value!.versions[0]!.data);
+    const n = s.priceLists.length; s.setStatus('archived'); expect(s.priceLists).toHaveLength(n);
     expect(() => s.setStatus('draft')).toThrow();
   });
   it('requires resending revisions before acceptance', () => {

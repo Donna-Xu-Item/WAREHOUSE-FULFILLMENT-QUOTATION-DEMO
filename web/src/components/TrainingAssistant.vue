@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { extraTrainingTopics } from '../lib/training';
 import { useApp } from '../lib/context';
-defineProps<{ dockedLeft?: boolean }>();
+
 const { store } = useApp();
 const emit = defineEmits<{ navigate: [target: string] }>();
 const zh = computed(() => store.state.prefs.lang === 'zh');
@@ -49,11 +49,12 @@ function ask(index?: number) {
 watch(() => messages.value.length, async () => { await nextTick(); feed.value?.scrollTo({ top: feed.value.scrollHeight, behavior: 'smooth' }); });
 function escape(event: KeyboardEvent) { if(event.key === 'Escape' && open.value) close(); }
 onMounted(() => { document.addEventListener('keydown', escape); try { if (!localStorage.getItem(key)) { welcome.value = true; open.value = true; } } catch { /* Launcher remains available. */ } });
-onUnmounted(() => { clearHighlight(); document.removeEventListener('keydown', escape); });
+watch(open, value => document.body.classList.toggle('training-open', value), { immediate: true });
+onUnmounted(() => { document.body.classList.remove('training-open'); clearHighlight(); document.removeEventListener('keydown', escape); });
 </script>
 
 <template>
-  <aside class="training no-print" :class="{ left: dockedLeft }" :aria-label="txt('Quotation 学习助手', 'Quotation training assistant')">
+  <aside class="training no-print" :class="{ expanded: open }" :aria-label="txt('Quotation 学习助手', 'Quotation training assistant')">
     <section v-if="open" id="training-panel" class="panel" role="region" :aria-label="txt('学习与帮助', 'Learn and get help')">
       <header><div><span class="eyebrow">QUOTATION ACADEMY</span><h2>{{ txt('报价学习助手', 'Quotation assistant') }}</h2></div><button class="btn sm" @click="close" :aria-label="txt('关闭助手', 'Close assistant')">×</button></header>
       <div class="body" ref="feed">
@@ -61,10 +62,10 @@ onUnmounted(() => { clearHighlight(); document.removeEventListener('keydown', es
         <template v-else-if="active"><div class="progress"><span v-for="(_, i) in topics" :key="i" :class="{done: i <= step}"></span></div><span class="eyebrow">{{ step + 1 }} / {{ topics.length }}</span><h3>{{ active.title }}</h3><p>{{ active.a }}</p><button class="btn sm" @click="locate(active.target)">{{ txt('定位此功能 ↗', 'Show this feature ↗') }}</button><div class="tour-actions"><button class="btn sm" :disabled="step === 0" @click="advance(-1)">{{ txt('上一步', 'Back') }}</button><button class="btn primary sm" @click="advance(1)">{{ step === topics.length - 1 ? txt('完成导览 ✓', 'Finish tour ✓') : txt('下一步 →', 'Next →') }}</button></div></template>
         <template v-else><p class="intro">{{ txt('你好！选择一个问题，或输入你想了解的操作。', 'Hello! Choose a question or ask how to use the quotation tool.') }}</p><div v-for="(message, i) in messages" :key="i" class="message" :class="message.role"><span class="eyebrow">{{ message.role === 'user' ? txt('你', 'YOU') : txt('学习助手', 'ASSISTANT') }}</span><p>{{ message.text }}</p></div></template>
       </div>
-      <div class="questions"><div class="question-heading"><strong>{{ txt('常见问题', 'Quick questions') }}</strong><button class="text-button" @click="start">{{ txt('重新导览', 'Restart tour') }}</button></div><div class="question-list"><button v-for="(topic,i) in topics" :key="topic.target" @click="ask(i)">{{ topic.q }} <span>↗</span></button></div></div>
+      <details class="questions"><summary class="question-heading"><strong>{{ txt('常见问题', 'Quick questions') }}</strong><button class="text-button" @click="start">{{ txt('重新导览', 'Restart tour') }}</button></summary><div class="question-list"><button v-for="(topic,i) in topics" :key="topic.target" @click="ask(i)">{{ topic.q }} <span>↗</span></button></div></details>
       <form @submit.prevent="ask()"><input class="input" v-model="input" maxlength="500" :placeholder="txt('询问报价操作…', 'Ask about quotation steps…')" :aria-label="txt('输入问题', 'Your question')"/><button class="btn primary sm" :disabled="!input.trim()" type="submit">{{ txt('发送', 'Send') }}</button></form><p class="disclosure">{{ txt('基于操作知识库回答 · 特殊报价请向负责人确认', 'Answers from the training knowledge base · Confirm special rates with your quotation owner') }}</p>
     </section>
-    <button class="launcher" :aria-expanded="open" aria-controls="training-panel" @click="open ? close() : open = true"><span aria-hidden="true">✦</span> {{ txt('Training AI · 学习与帮助', 'Training AI · Learn & help') }}</button>
+    <button v-if="!open" class="launcher" :aria-expanded="open" aria-controls="training-panel" @click="open ? close() : open = true"><span aria-hidden="true">✦</span> {{ txt('Training AI · 学习与帮助', 'Training AI · Learn & help') }}</button>
   </aside>
 </template>
 
@@ -73,4 +74,19 @@ onUnmounted(() => { clearHighlight(); document.removeEventListener('keydown', es
 </style>
 <style>
 .training-highlight{outline:3px solid var(--primary)!important;outline-offset:5px;box-shadow:0 0 0 8px var(--accent);scroll-margin-top:160px;transition:outline .2s}@media print{.training{display:none!important}.training-highlight{outline:none!important;box-shadow:none!important}}
+</style>
+
+<style>
+html:has(body.training-open){scroll-padding-right:380px}
+body.training-open{padding-right:380px;box-sizing:border-box}
+body.training-open .scrim,body.training-open .modal,body.training-open .workflow-modal{right:380px}
+@media(max-width:1400px) and (min-width:1101px){body.training-open .layout{grid-template-columns:minmax(0,1fr)}body.training-open .side{position:static;flex-direction:row;flex-wrap:wrap}}
+@media(max-width:1100px){html:has(body.training-open){scroll-padding-right:0;scroll-padding-bottom:46dvh}body.training-open{padding-right:0;padding-bottom:46dvh}body.training-open .scrim,body.training-open .modal,body.training-open .workflow-modal{right:0;bottom:46dvh}body.training-open .drawer{height:100%}}
+@media print{body.training-open{padding:0}}
+</style>
+<style scoped>
+.training.expanded{top:0;bottom:0;right:0;left:auto;width:380px;z-index:55}
+.expanded .panel{width:100%;height:100dvh;max-height:100dvh;max-width:100%;border-radius:0;border-top:0;border-bottom:0;box-shadow:none}
+.questions summary{cursor:pointer}.questions .question-list{margin-top:8px;max-height:180px}.body{min-height:0}.progress{flex-shrink:0}
+@media(max-width:1100px){.training.expanded{top:auto;bottom:0;width:100%;height:46dvh}.expanded .panel{height:46dvh;max-height:46dvh}.expanded header{padding:10px 16px}.expanded h2{font-size:15px}.expanded .body{padding:12px 16px}.expanded h3{font-size:17px;margin:6px 0}.expanded p{margin-bottom:8px}.questions{padding:8px 16px}.expanded .disclosure{padding-bottom:6px}.question-list{max-height:90px}}
 </style>

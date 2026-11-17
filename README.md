@@ -2,6 +2,12 @@
 
 Independent UI demo based on https://github.com/tommyyula/item-Quote-fulfillment . The original repository is unchanged.
 
+## Current workflow and governance
+
+Archived means quotation completed and published to the formal price list (local simulation in this demo), not expired. The training panel reserves page space. New-item design requests use role previews, duplicate checks and Fact/readiness collection; real AI, authorization and Billing Engine integrations are not connected.
+
+See [current workflow](handoff/quotation-workflow.md) and [billing-item governance and role design](handoff/billing-item-governance.md).
+
 ## Features
 - UOM-first configuration for all charge items, with independent conditions and pricing methods.
 - Rates, tiers, minimums, first/additional-unit pricing and billing settings.
@@ -32,4 +38,4 @@ Expected URL after successful publication: https://Donna-Xu-Item.github.io/WAREH
 
 Quote data is stored in each visitor's browser and is not shared across users. This demo does not connect to production billing. Confirm business rules before integrating into the development application.
 
-Validation: frontend build/typecheck and 53 tests passed. Browser visual verification remains pending.
+Validation: frontend build/typecheck and 64 tests passed. Browser visual verification remains pending.
