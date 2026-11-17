@@ -81,7 +81,7 @@ html:has(body.training-open){scroll-padding-right:380px}
 body.training-open{padding-right:380px;box-sizing:border-box}
 body.training-open .scrim,body.training-open .modal,body.training-open .workflow-modal{right:380px}
 @media(max-width:1400px) and (min-width:1101px){body.training-open .layout{grid-template-columns:minmax(0,1fr)}body.training-open .side{position:static;flex-direction:row;flex-wrap:wrap}}
-@media(max-width:1100px){html:has(body.training-open){scroll-padding-right:0;scroll-padding-bottom:46dvh}body.training-open{padding-right:0;padding-bottom:46dvh}body.training-open .scrim,body.training-open .modal,body.training-open .workflow-modal{right:0;bottom:46dvh}body.training-open .drawer{height:100%}}
+@media(max-width:1100px){html:has(body.training-open){scroll-padding-right:0;scroll-padding-bottom:46dvh}body.training-open{padding-right:0;padding-bottom:0;height:100dvh;overflow:hidden}body.training-open #app{height:54dvh;overflow:auto;overscroll-behavior:contain}body.training-open .scrim,body.training-open .modal,body.training-open .workflow-modal{right:0;bottom:46dvh}body.training-open .drawer{height:100%}}
 @media print{body.training-open{padding:0}}
 </style>
 <style scoped>
