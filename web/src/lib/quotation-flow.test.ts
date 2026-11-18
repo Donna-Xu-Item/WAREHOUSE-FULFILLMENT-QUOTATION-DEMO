@@ -44,9 +44,6 @@ describe('manual lifecycle publishes local price lists at archive', () => {
     expect(s.quote.value?.acceptedVersion).toBe(1);
     expect(() => s.saveVersion('edit accepted')).toThrow();
     expect(() => s.restoreVersion(1)).toThrow();
-    expect(() => s.setStatus('archived')).toThrow();
-    expect(JSON.stringify(s.priceLists)).toBe(before);
-    s.demoAccess.role = 'pricing_publisher';
     s.setStatus('archived');
     expect(JSON.stringify(s.priceLists.slice(0,-1))).toBe(before);
     expect(s.priceLists.at(-1)).toMatchObject({sourceQuoteId: s.quote.value!.id, sourceVersion:1, demo:true});

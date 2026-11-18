@@ -1,3 +1,4 @@
+import { effectiveCatalog } from "./billingRequests";
 // Turns quote lines into a customer rate sheet laid out like the UNIS Business Proposal template:
 // sections in template order, one row per service, identical-price variants merged, qualifiers shown as sub-rows.
 // Output is language-neutral (English catalog strings); the renderer translates.
@@ -54,6 +55,7 @@ export function mergeRows(dimCount: number, rows: MRow[], order: string[][]): MR
 }
 
 export function buildProposal(cat: Catalog, data: QuoteData): PSection[] {
+  cat = effectiveCatalog(cat, data);
   const idx = chargeIndex(cat);
   const lines = quoteLines(cat, data);
   const sectionOf = (chargeId: string) =>

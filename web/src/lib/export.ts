@@ -1,3 +1,4 @@
+import { effectiveCatalog } from "./billingRequests";
 // Excel / JSON export of the proposal. ExcelJS is loaded on demand to keep the initial bundle small.
 import type { Translator } from "../i18n";
 import { mapQuote, setupList } from "./codemap";
@@ -38,6 +39,7 @@ export async function exportExcel(cat: Catalog, sections: PSection[], m: Proposa
 
 /** Workbook in the proposal layout + a raw "Rate lines" sheet for billing setup. */
 export async function buildExcel(cat: Catalog, sections: PSection[], m: ProposalMeta, T: Translator): Promise<ArrayBuffer> {
+  cat = effectiveCatalog(cat, m.data);
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = "UNIS Quote";

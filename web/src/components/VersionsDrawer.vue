@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // Version control: list saved versions, view read-only, restore into the draft, compare any two (or a version vs the draft).
+import { effectiveCatalog } from "../lib/billingRequests";
 import { computed, ref } from "vue";
 import { useApp } from "../lib/context";
 import { chargeIndex, quoteLines } from "../lib/engine";
@@ -12,7 +13,7 @@ const emit = defineEmits<{ close: [] }>();
 const { store, T } = useApp();
 const q = computed(() => store.quote.value!);
 const versions = computed(() => [...q.value.versions].reverse());
-const idx = chargeIndex(catalog);
+const idx = computed(() => chargeIndex(effectiveCatalog(catalog, {agentItems:[...(q.value.draft.agentItems ?? []),...q.value.versions.flatMap(v=>v.data.agentItems ?? [])]})));
 
 const a = ref<string>(q.value.versions.at(-1) ? String(q.value.versions.at(-1)!.v) : "draft");
 const b = ref<string>("draft");
@@ -20,7 +21,7 @@ const dataOf = (k: string): QuoteData => (k === "draft" ? q.value.draft : q.valu
 
 const label = (l: QuoteLine) => {
   const t = T.value;
-  const parts = [t.tc(idx[l.chargeId].charge.name)];
+  const parts = [t.tc(idx.value[l.chargeId].charge.name)];
   if (l.col === "min") parts.push(t.t("e.minimumPer", { basis: t.t(`basis.${l.minBasis}`) }));
   else {
     if (l.unitId) parts.push(t.t("e.perUnit", { unit: softLower(t.tc(l.unitLabel)) }));

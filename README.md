@@ -1,41 +1,31 @@
 # Warehouse Fulfillment Quotation Demo
 
-Independent UI demo based on https://github.com/tommyyula/item-Quote-fulfillment . The original repository is unchanged.
+Independent demo based on https://github.com/tommyyula/item-Quote-fulfillment . The original repository is unchanged.
 
-## Current workflow and governance
+## Current experience
 
-Archived means quotation completed and published to the formal price list (local simulation in this demo), not expired. The training panel reserves page space. New-item design requests use role previews, duplicate checks and Fact/readiness collection; real AI, authorization and Billing Engine integrations are not connected.
+Billing AI Agent uses a conversation rather than technical forms. Three interactive examples demonstrate reusing a label item, adding dual-person seal verification, and adding a battery state-of-charge check requiring a new Fact. This is a scripted demo, not a connected LLM.
 
-See [current workflow](handoff/quotation-workflow.md) and [billing-item governance and role design](handoff/billing-item-governance.md).
+Confirmed new items enter their service category, quotation rates, version snapshots and exports. At Sent, owner notifications are prepared in the browser; at Archived, Billing Items, Recognition Rules and the Price List are synchronized in a local simulation after owner readiness is confirmed. No real notifications or backend changes occur.
 
-## Features
-- UOM-first configuration for all charge items, with independent conditions and pricing methods.
-- Rates, tiers, minimums, first/additional-unit pricing and billing settings.
-- First-visit guided tour and Chinese/English training knowledge-base chat with suggested questions (no LLM integration).
-- Proposal preview and Excel/print exports.
+There are exactly three demo roles: System Admin, Quotation User without item creation, and Quotation User with item creation. Production permissions require backend enforcement.
 
-## Run locally
+See [agent examples and current requirements](handoff/billing-item-governance.md) and [quotation workflow](handoff/quotation-workflow.md).
+
+## Run and build
+
 Requires Node.js compatible with Vite 7 (for example Node.js 24).
 
 ```sh
 cd web
 npm ci
 npm run dev
-```
-
-## Validate and rebuild
-```sh
-cd web
 npm test
 npm run build
 ```
 
-The `docs/` folder contains the built demo. After rebuilding, copy the contents of `web/dist/` to `docs/` and retain `docs/.nojekyll`.
+The docs folder contains the built site. Copy web/dist contents to docs after rebuilding, retaining docs/.nojekyll. GitHub Pages uses main /docs.
 
-## Publish with GitHub Pages
-In repository Settings > Pages, choose Deploy from a branch, select main and /docs, then Save.
-Expected URL after successful publication: https://Donna-Xu-Item.github.io/WAREHOUSE-FULFILLMENT-QUOTATION-DEMO/?lang=zh
+Quotation data is stored in each browser. BNP, Billing Engine, business systems, notifications and LLM integrations are not connected. Demo dictionary names and Fact fields are illustrative placeholders, not production schema claims.
 
-Quote data is stored in each visitor's browser and is not shared across users. This demo does not connect to production billing. Confirm business rules before integrating into the development application.
-
-Validation: frontend build/typecheck and 64 tests passed. Browser visual verification remains pending.
+Validation: frontend build/typecheck and 66 tests passed.

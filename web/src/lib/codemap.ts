@@ -1,3 +1,4 @@
+import { effectiveCatalog } from "./billingRequests";
 // Mapback: every quote line -> an existing system charge code + the system conditions to configure.
 // Status per line:
 //   mapped         code exists and already uses every condition this line needs
@@ -113,6 +114,7 @@ export function mapLine(cat: Catalog, data: QuoteData, l: QuoteLine): LineMappin
 }
 
 export function mapQuote(cat: Catalog, data: QuoteData): LineMapping[] {
+  cat = effectiveCatalog(cat, data);
   return quoteLines(cat, data).map(l => mapLine(cat, data, l));
 }
 

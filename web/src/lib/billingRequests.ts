@@ -1,78 +1,53 @@
-import type { Catalog } from './types';
-export type DemoRole = 'quote_user' | 'pricing_specialist' | 'billing_admin' | 'integration_engineer' | 'pricing_publisher';
-export const roles: { id: DemoRole; label: string }[] = [
-  { id: 'quote_user', label: 'Quotation User' }, { id: 'pricing_specialist', label: 'Pricing Specialist' },
-  { id: 'billing_admin', label: 'Billing Catalog Admin' }, { id: 'integration_engineer', label: 'Integration Engineer' }, { id: 'pricing_publisher', label: 'Pricing Publisher' },
+import type { Catalog, SimpleCharge } from './types';
+export type DemoRole = 'system_admin' | 'quote_user' | 'quote_creator';
+export const roles: {id: DemoRole; label: string}[] = [
+  {id:'system_admin',label:'系统 Admin'}, {id:'quote_user',label:'可配置 Quotation（不能新增 Item）'}, {id:'quote_creator',label:'可配置 Quotation＋新增 Item'},
 ];
-export const canPropose = (role: DemoRole) => role === 'pricing_specialist';
-export const canApprove = (role: DemoRole) => role === 'billing_admin';
-export interface DesignField { id: string; label: string; group: string; required?: boolean; type?: string; options?: string[] }
-/** Screenshot field inventory. Controlled values must come from the real APIs before production. */
-export const designFields: DesignField[] = [
-  {id:'segment',label:'Target segment',group:'Quotation / Price List',required:true},
-  {id:'billTo',label:'BillTo / Customer scope',group:'Quotation / Price List',required:true},
-  {id:'facility',label:'Facility / service scope',group:'Quotation / Price List',required:true},
-  {id:'effectiveDate',label:'Effective date',group:'Quotation / Price List',required:true,type:'date'},
-  {id:'endDate',label:'End date (blank = no end date)',group:'Quotation / Price List',type:'date'},
-  {id:'currency',label:'Currency',group:'Quotation / Price List',required:true},
-  {id:'quotationPrice',label:'Customer quotation price (separate from default rate)',group:'Quotation / Price List',required:true,type:'number'},
-  {id:'billableRecordType',label:'Billable Record Type',group:'Billing Item',required:true},
-  {id:'billingCategory',label:'Billing Category',group:'Billing Item',required:true},
-  {id:'code',label:'Charge Code',group:'Billing Item',required:true},
-  {id:'name',label:'Item Name',group:'Billing Item',required:true},
-  {id:'description',label:'Description',group:'Billing Item',required:true},
-  {id:'businessObject',label:'Business Object / cutoff policy',group:'Billing Item',required:true},
-  {id:'uom',label:'UOM',group:'Billing Item',required:true},
-  {id:'accountingItem',label:'Accounting Item / category default',group:'Billing Item',required:true},
-  {id:'qtyAggregation',label:'Qty Aggregation Mode (when idempotency = Once)',group:'Billing Item'},
-  {id:'minCharge',label:'Min Charge',group:'Billing Item',type:'number'},
-  {id:'maxCharge',label:'Max Charge',group:'Billing Item',type:'number'},
-  {id:'department',label:'Department',group:'Billing Item profile'},
-  {id:'processStage',label:'Process Stage',group:'Billing Item profile'},
-  {id:'industryLow',label:'Industry Low',group:'Billing Item profile',type:'number'},
-  {id:'industryTypical',label:'Industry Typical',group:'Billing Item profile',type:'number'},
-  {id:'industryHigh',label:'Industry High',group:'Billing Item profile',type:'number'},
-  {id:'rateType',label:'Rate Type (authoritative dictionary)',group:'WMS / Rate configurations',required:true},
-  {id:'defaultRate',label:'Default Rate (not customer quotation price)',group:'WMS / Rate configurations',required:true,type:'number'},
-  {id:'wms',label:'Automatic billing for WMS (prevent double triggering)',group:'WMS / Rate configurations',required:true,options:['Disabled','Enabled']},
-  {id:'rateConfigurations',label:'Rate configurations: name, rate type, sort order, quantity source/expression, default price, formula/tier rules',group:'WMS / Rate configurations',required:true,type:'textarea'},
-  {id:'ruleName',label:'Recognition Rule Name',group:'Recognition Rule',required:true},
-  {id:'factType',label:'Fact Type',group:'Recognition Rule',required:true},
-  {id:'priority',label:'Priority / conflict resolution',group:'Recognition Rule',required:true},
-  {id:'conditions',label:'Conditions: AND/OR groups, Fact field, operator, input/field value',group:'Recognition Rule',required:true,type:'textarea'},
-  {id:'outputs',label:'Outputs: billable record type, sort order, idempotency, split key fields, quantity expression',group:'Recognition Rule',required:true,type:'textarea'},
-  {id:'priceConditions',label:'Price List conditions: Fact field, operator, value, units and data source',group:'Fact dependency',required:true,type:'textarea'},
-  {id:'factFields',label:'All Fact dependencies: field, type, unit, source, missing/null behavior, quantity/event time',group:'Fact dependency',required:true,type:'textarea'},
-  {id:'factAvailability',label:'Fact availability',group:'Fact dependency',required:true,options:['Unknown','Existing - unverified','New field / external adaptation required']},
-  {id:'externalOwner',label:'WMS / source-system owner and adaptation ticket (if missing)',group:'Fact dependency'},
-  {id:'sampleFact',label:'Sample Fact payload / fixture reference',group:'Fact dependency',required:true,type:'textarea'},
-  {id:'testPlan',label:'Expected charges: positive, negative, boundary, missing Fact, duplicate, replay and effective-date cases',group:'Validation',required:true,type:'textarea'},
-];
-export interface BillingRequest {
-  id: string; quoteId: string; categoryId: string; need: string; gap: string; fields: Record<string,string>;
-  candidateIds: string[]; status: 'submitted' | 'approved' | 'ready'; createdBy: string; approvedBy?: string;
-  factEvidence?: string; testEvidence?: string; verifiedBy?: string;
+export const canPropose = (role: DemoRole) => role === 'system_admin' || role === 'quote_creator';
+// Legacy design requests are retained in storage but are not part of the agent flow.
+export interface BillingRequest { id:string; quoteId:string; categoryId:string; need:string; gap:string; fields:Record<string,string>; candidateIds:string[]; status:string; createdBy:string; approvedBy?:string; factEvidence?:string; testEvidence?:string; verifiedBy?:string }
+export interface AgentItem {
+  id:string; scenario:'seal'|'battery'; categoryId:string; charge:SimpleCharge;
+  price:number; need:string; trigger:string; quantity:string; limits:string;
+  requiresDevelopment:boolean;
+  configuration:{ billingItem:Record<string,unknown>; recognitionRule:Record<string,unknown>; priceList:Record<string,unknown> };
 }
-export function missingFields(r: Pick<BillingRequest, 'categoryId' | 'need' | 'gap' | 'fields'>) {
-  const missing = designFields.filter(f => f.required && !r.fields[f.id]?.trim()).map(f => f.label);
-  if (!r.categoryId) missing.push('Service category');
-  if (!r.need.trim()) missing.push('Business need');
-  if (!r.gap.trim()) missing.push('Why existing items cannot support it');
-  for (const id of ['quotationPrice','defaultRate','minCharge','maxCharge','industryLow','industryTypical','industryHigh']) {
-    const value = r.fields[id]; if (value?.trim() && (!Number.isFinite(Number(value)) || Number(value) < 0)) missing.push(`${id}: valid non-negative number`);
-  }
-  if (r.fields.minCharge && r.fields.maxCharge && Number(r.fields.minCharge) > Number(r.fields.maxCharge)) missing.push('Minimum must not exceed maximum');
-  if (r.fields.endDate && r.fields.endDate < r.fields.effectiveDate) missing.push('End date must not precede effective date');
-  if (r.fields.factAvailability === 'New field / external adaptation required' && !r.fields.externalOwner?.trim()) missing.push('External owner / adaptation ticket');
-  return missing;
+export interface AgentNotification { id:string; quoteId:string; version:number; itemIds:string[]; recipients:string[]; mode:'simulation'; status:'prepared'; message:string }
+export interface AgentSync { id:string; quoteId:string; version:number; itemIds:string[]; billingItems:unknown[]; recognitionRules:unknown[]; priceListId:string; mode:'simulation'; status:'complete' }
+export const examples = [
+  { id:'label',label:'例 1 · 复用现有贴标项目',prompt:'我要对商品贴标按件收费，每件 0.35 美元。'},
+  { id:'seal',label:'例 2 · 新增双人封签核验',prompt:'出库前需要双人核对封签，每箱收费 2 美元，普通贴标和拍照都不能替代。'},
+  { id:'battery',label:'例 3 · 新增电池合规检查，涉及新 Fact',prompt:'出库电池箱需要检查荷电状态，超过 30% 的箱子每箱收 3 美元。'},
+] as const;
+export function scenarioOf(text:string): 'label'|'seal'|'battery'|null {
+  if (/电池|荷电|battery|charge.percent|soc\b/i.test(text)) return 'battery';
+  if (/封签|seal/i.test(text)) return 'seal';
+  if (/贴标|标签|label/i.test(text)) return 'label';
+  return null;
 }
-export function recommendItems(catalog: Catalog, query: string, categoryId: string) {
-  const words = query.toLowerCase().match(/[a-z0-9]+|[\u4e00-\u9fff]/g) ?? [];
-  return catalog.categories.flatMap(category => category.charges.map(charge => {
-    const text = `${charge.id} ${charge.name} ${charge.desc}`.toLowerCase();
-    return { charge, category, score: words.reduce((sum,w) => sum + (text.includes(w) ? 1 : 0), 0) };
-  })).filter(x => (!categoryId || x.category.id === categoryId) && x.score > 0).sort((a,b) => b.score-a.score).slice(0,5);
+export function suggestedIds(scenario:string) { return scenario === 'label' ? ['VA-RELABEL','VA-FNSKU','OB-LABEL'] : scenario === 'seal' ? ['VA-PHOTO','OB-LABEL','OB-ROUTING'] : ['SC-IOT','OB-ROUTING','VA-PHOTO']; }
+export function parsePrice(text:string):number|null {
+  const match=text.match(/(?:\$|USD\s*)(\d+(?:\.\d+)?)/i) ?? text.match(/(\d+(?:\.\d+)?)\s*(?:美元|美金|USD|dollars?)/i);
+  return match && Number.isFinite(Number(match[1])) ? Number(match[1]) : null;
 }
-export function assertRequestReady(r: BillingRequest) {
-  if (r.status !== 'ready' || missingFields(r).length || !r.approvedBy || !r.verifiedBy || !r.factEvidence?.trim() || !r.testEvidence?.trim()) throw new Error('Billing request is not technically ready');
+export function makeAgentItem(scenario:'seal'|'battery',price:number,context:{customerId:string;facility:string;effectiveDate:string}, need:string):AgentItem {
+  if (!Number.isFinite(price)||price<0) throw new Error('Invalid price');
+  const battery=scenario==='battery';
+  const code=battery?'DEMO-BATTERY-SOC-CHECK':'DEMO-DUAL-SEAL-CHECK';
+  const name=battery?'Battery state-of-charge compliance check':'Dual-person seal verification';
+  const trigger=battery?'Outbound carton: battery state of charge > 30%; exclude <= 30%.':'Outbound carton: dual-person seal verification completed.';
+  const recordType=battery?'DEMO_BATTERY_CHECK':'DEMO_SEAL_CHECK';
+  const conditions=battery?[{field:'batteryStateOfChargePercent',operator:'>',value:30}]:[{field:'dualSealCheckCompleted',operator:'=',value:true}];
+  const item:AgentItem={id:code,scenario,categoryId:'outbound',price,need,trigger,quantity:'One matched Fact per carton; quantity = 1',limits:'No minimum or maximum charge',requiresDevelopment:battery,
+    charge:{id:code,kind:'simple',name,desc:`${trigger} Charge per carton; no minimum or maximum.`,tier:'main',channel:'Both',codes:[],invoiceLines:0,unit:'Carton',default:price,lo:0,hi:100000,basis:'Agent demo: user-confirmed rate',pct:false,new:true},
+    configuration:{
+      billingItem:{billableRecordType:recordType,category:'DEMO_OUTBOUND',chargeCode:code,name,active:false,businessObject:'Outbound',aggregation:{qtyAggregationMode:'Sum',minCharge:null,maxCharge:null},rateConfigurations:[{name:'Base Rate',rateType:'UNIT_RATE',sortOrder:0,quantitySource:'Fixed Value',quantity:1,defaultPrice:price}]},
+      recognitionRule:{ruleId:'Auto-generated on sync',ruleName:`${name} recognition`,factType:'OUTBOUND',priority:100,active:false,conditions:{within:'AND',conditions},outputs:[{billableRecordType:recordType,sortOrder:0,idempotencyStrategy:'Multi (1:1)',splitKeyFields:[],quantityExpression:{type:'Fixed Value',value:1}}]},
+      priceList:{customerId:context.customerId,facility:context.facility,effectiveDate:context.effectiveDate,chargeCode:code,uom:'Carton',currency:'USD',price,conditions},
+    }};
+  return item;
+}
+export function effectiveCatalog(cat:Catalog,data?:{agentItems?:AgentItem[]}|null):Catalog {
+  if (!data?.agentItems?.length) return cat;
+  return {...cat,categories:cat.categories.map(c=>({...c,charges:[...c.charges,...data.agentItems!.filter(i=>i.categoryId===c.id&&!c.charges.some(x=>x.id===i.id)).map(i=>i.charge)]})),mapback:{...cat.mapback,newItems:{...cat.mapback.newItems,...Object.fromEntries(data.agentItems.map(i=>[i.id,i.charge.name]))}}};
 }

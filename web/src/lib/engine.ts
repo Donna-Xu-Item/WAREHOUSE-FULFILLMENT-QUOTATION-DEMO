@@ -1,3 +1,4 @@
+import { effectiveCatalog } from "./billingRequests";
 // Pricing engine: show/hide rules and rate-row generation for the charge builders.
 // Pure functions over (catalog, selections) so the UI, proposal and exports all share one logic.
 import type {
@@ -136,6 +137,7 @@ export function benchmarkFor(d: number | null, col: string): number | null {
 
 /** Every priced cell of a quote, in catalog order. */
 export function quoteLines(cat: Catalog, data: QuoteData, globalShowAll = false): QuoteLine[] {
+  cat = effectiveCatalog(cat, data);
   const out: QuoteLine[] = [];
   for (const category of cat.categories) {
     for (const c of category.charges) {

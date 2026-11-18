@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watchEffect } from "vue";
 import itemLogoDark from "./assets/brand/item-white-logo.svg";
 import itemLogoLight from "./assets/brand/item-logo-fullcolor-blacktxt.svg";
+import { effectiveCatalog } from "./lib/billingRequests";
 import BillingItemAssistant from "./components/BillingItemAssistant.vue";
 import NewQuoteDrawer from "./components/NewQuoteDrawer.vue";
 import QuoteWorkflow from "./components/QuoteWorkflow.vue";
@@ -67,7 +68,7 @@ const matches = (c: Charge) => {
   if (!q) return true;
   return [c.name, c.desc, T.value.tc(c.name), T.value.tc(c.desc)].some(x => x.toLowerCase().includes(q));
 };
-const cats = computed(() => catalog.categories.map(cat => {
+const cats = computed(() => effectiveCatalog(catalog, store.data.value).categories.map(cat => {
   const shown = cat.charges.filter(matches);
   return { cat, main: shown.filter(c => c.tier === "main"), adv: shown.filter(c => c.tier !== "main"),
            selected: cat.charges.filter(c => store.data.value?.selections[c.id]?.on).length };
@@ -218,10 +219,6 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
             <span v-if="c.selected" class="tag">{{ T.t("e.selected", { n: c.selected }) }}</span>
           </div>
           <p class="muted cat-desc">{{ T.tc(c.cat.desc) }}</p>
-          <div v-for="request in store.billingRequests.filter(r => r.quoteId === store.quote.value?.id && r.categoryId === c.cat.id)" :key="request.id" class="note info">
-            <strong>{{ request.fields.name }} · {{ request.fields.code }}</strong> · {{ request.status }}
-            <p>{{ st.prefs.lang === 'zh' ? '新项目设计申请 · 尚未接入计费，不计入报价或导出。' : 'New-item design request · not integrated into billing, quoted rates or exports.' }}</p>
-          </div>
           <div class="list">
             <ChargeCard v-for="ch in c.main" :key="ch.id" :charge="ch" />
           </div>

@@ -3,6 +3,7 @@
 import { computed, ref } from "vue";
 import { useApp } from "../lib/context";
 import { mapQuote, setupList, summarize, type LineMapping } from "../lib/codemap";
+import { effectiveCatalog } from "../lib/billingRequests";
 import { chargeIndex } from "../lib/engine";
 import { amount, softLower } from "../lib/format";
 import { catalog } from "../lib/store";
@@ -10,7 +11,7 @@ import type { QuoteData } from "../lib/types";
 
 const props = defineProps<{ data: QuoteData; compact?: boolean }>();
 const { T } = useApp();
-const idx = chargeIndex(catalog);
+const idx = computed(() => chargeIndex(effectiveCatalog(catalog, props.data)));
 const lines = computed(() => mapQuote(catalog, props.data));
 const sum = computed(() => summarize(lines.value));
 const setup = computed(() => setupList(catalog, lines.value));
@@ -18,11 +19,11 @@ const filter = ref<"all" | "setup">("all");
 const shown = computed(() => (filter.value === "all" ? lines.value : lines.value.filter(l => l.status !== "mapped")));
 
 const lineLabel = (m: LineMapping) => {
-  const t = T.value, c = idx[m.chargeId].charge;
+  const t = T.value, c = idx.value[m.chargeId].charge;
   const unit = c.kind === "builder" && m.unitId ? c.units.find(u => u.id === m.unitId)?.label : undefined;
   return [t.tc(c.name), unit ? t.t("e.perUnit", { unit: softLower(t.tc(unit)) }) : ""].filter(Boolean).join(", ");
 };
-const fmtOf = (m: LineMapping) => { const c = idx[m.chargeId].charge; return c.kind === "simple" ? { pct: c.pct, num: c.num } : {}; };
+const fmtOf = (m: LineMapping) => { const c = idx.value[m.chargeId].charge; return c.kind === "simple" ? { pct: c.pct, num: c.num } : {}; };
 const rate = (m: LineMapping) => (m.price == null ? T.value.t("p.tbd") : amount(m.price, fmtOf(m)));
 </script>
 

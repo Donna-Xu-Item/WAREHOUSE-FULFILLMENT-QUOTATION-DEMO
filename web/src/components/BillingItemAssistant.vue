@@ -1,68 +1,78 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useApp } from '../lib/context';
 import { catalog } from '../lib/store';
-import { designFields, roles, canPropose, canApprove, missingFields, recommendItems } from '../lib/billingRequests';
-import type { BillingRequest } from '../lib/billingRequests';
-const { store, T } = useApp();
-const t = (cn: string, en: string) => store.state.prefs.lang === 'zh' ? cn : en;
-const open = ref(false), searched = ref(false), extending = ref(false), message = ref('');
-const need = ref(''), categoryId = ref(''), gap = ref('');
-const fields = reactive<Record<string,string>>({ wms: 'Disabled', factAvailability: 'Unknown' });
-const factEvidence = ref(''), testEvidence = ref('');
-const candidates = computed(() => recommendItems(catalog, need.value, categoryId.value));
-const requests = computed(() => store.billingRequests.filter(r => r.quoteId === store.quote.value?.id));
-const groups = [...new Set(designFields.map(f => f.group))];
-const editable = computed(() => store.quote.value?.status === 'draft' && !store.readOnly.value);
-const missing = computed(() => missingFields({categoryId:categoryId.value, need:need.value, gap:gap.value, fields}));
-function useExisting(id: string) {
-  if (!editable.value) return;
-  const s = store.sel(id);
-  if (!s.on) {
-    if (catalog.defaultPreset[id]) Object.assign(s, JSON.parse(JSON.stringify(catalog.defaultPreset[id])));
-    s.on = true;
-  }
-  store.touch(); message.value = t('已选用标准项目，请在对应分类检查 UOM、条件和报价费率。', 'Standard item selected. Review its UOM, conditions and quotation rate in the service category.');
-  document.getElementById(`ch-${id}`)?.scrollIntoView({behavior:'smooth', block:'center'});
+import { canPropose, examples, makeAgentItem, parsePrice, roles, scenarioOf, suggestedIds } from '../lib/billingRequests';
+const { store, T }=useApp();
+const open=ref(false), input=ref(''), feed=ref<HTMLElement>();
+const scenario=ref<'label'|'seal'|'battery'|null>(null), stage=ref('intro'), need=ref(''), rate=ref<number|null>(null);
+const messages=ref<{role:'user'|'agent';text:string}[]>([]), error=ref('');
+const candidates=computed(()=>catalog.categories.flatMap(c=>c.charges).filter(c=>suggestedIds(scenario.value??'').includes(c.id)));
+const item=computed(()=>scenario.value && scenario.value!=='label' && rate.value!==null ? makeAgentItem(scenario.value,rate.value,{customerId:store.customer.value?.id??'',facility:store.quote.value?.draft.header.facility??'',effectiveDate:store.quote.value?.draft.header.effectiveDate??''},need.value):null);
+const items=computed(()=>store.data.value?.agentItems??[]);
+const notices=computed(()=>store.agentNotifications.filter(n=>n.quoteId===store.quote.value?.id));
+const sync=computed(()=>store.agentSyncs.find(s=>s.quoteId===store.quote.value?.id));
+const editable=computed(()=>store.quote.value?.status==='draft'&&!store.readOnly.value);
+function say(text:string){messages.value.push({role:'agent',text});}
+function reset(){messages.value=[];scenario.value=null;stage.value='intro';need.value='';rate.value=null;error.value='';}
+function start(text:string){reset();open.value=true;answer(text);}
+function propose(){
+  if(!canPropose(store.demoAccess.role)){say('你当前可以配置报价，但不能新增 Billing Item。请联系有“新增 Item”权限的报价用户或系统 Admin；已有标准 item 仍可直接选用。');return;}
+  if(scenario.value==='label'){say('这个例子中的商品贴标已由现有 Item label / relabel 支持。换价格无需新增 Code，请先选用现有项目。其他服务可重新描述或选择新建演示。');return;}
+  stage.value='trigger';say(scenario.value==='battery'?'我理解：针对出库电池箱，只有荷电状态超过 30% 时收费。请确认：每个符合条件的箱子只收一次，未超过 30% 的不收费，对吗？':'明白，普通贴标或拍照不能表达双人封签核验。请确认：出库前完成双人核验的每箱只收一次，未完成核验的不收费，对吗？');
 }
-function submit() {
-  try {
-    store.submitBillingRequest({categoryId:categoryId.value, need:need.value, gap:gap.value, fields:{...fields}, candidateIds:candidates.value.map(x=>x.charge.id)});
-    message.value = t('已提交设计申请，等待目录管理员审批。', 'Design request submitted for catalog-admin review.'); extending.value = false;
-  } catch (e) { message.value = t('无法提交：请补全必填信息、检查重复 Code／名称及当前角色。', 'Unable to submit: complete required information and check duplicate codes/names and your role.'); }
+function askPriceOrLimits(){
+  if(rate.value===null){stage.value='price';say('每个符合条件的箱子收多少美元？例如：“每箱 2 美元”。');}
+  else {stage.value='limits';say(`已记录每箱 USD ${rate.value}。这个收费是否没有最低费和封顶？这个演示可以回复“没有，按实际箱数计费”。`);}
 }
-function approve(r: BillingRequest) { try { store.approveBillingRequest(r.id); message.value = t('模拟审批通过：仅保存设计包，尚未创建真实 Billing Item 或 Rule。', 'Simulated approval recorded. No real Billing Item or Rule has been created.'); } catch { message.value = t('审批失败，请检查权限和申请内容。', 'Approval failed. Check permissions and request details.'); } }
-function verify(r: BillingRequest) { try { store.verifyBillingRequest(r.id, factEvidence.value, testEvidence.value); message.value = t('已模拟登记技术就绪；正式系统必须实际验证后端配置与试算。', 'Technical readiness recorded in the simulation. Production requires actual backend validation and dry-run results.'); } catch { message.value = t('需要审批通过、Integration Engineer 角色及两项证据。', 'Requires approval, Integration Engineer role and both evidence fields.'); } }
-function exportPacket(r: BillingRequest) {
-  const blob = new Blob([JSON.stringify({mode:'DESIGN_PREVIEW_NOT_DEPLOYED', request:r, itemStatus:'Inactive', recognitionRuleStatus:'Inactive', activation:'Only after archive publication succeeds and effective date is reached'},null,2)],{type:'application/json'});
-  const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href=url; a.download=`billing-design-${r.id}.json`; a.click(); URL.revokeObjectURL(url);
+function review(){
+  stage.value='review';say(`信息已经足够生成这个演示案例：\n• 服务：${scenario.value==='battery'?'电池荷电状态合规检查':'出库双人封签核验'}\n• 分类：Outbound\n• 计费：每个符合条件的箱子一次，USD ${rate.value}/箱\n• 条件：${scenario.value==='battery'?'荷电状态超过 30%；其余不收费':'完成双人核验；未完成不收费'}\n• 无最低费、无封顶\n• 客户、仓库和生效日期沿用当前报价\n我会生成 Billing Item、Recognition Rule 和 Price List 配置草稿。${scenario.value==='battery'?'此例需要新增荷电状态 Fact，由负责人在发送后确认适配。':'此例假设 Demo Fact 已具备，仍需要负责人确认是否要开发。'}\n确认后加入报价，不会现在就创建生产配置。`);
 }
+function add(){
+  if(stage.value!=='review'||!item.value)return;
+  try{store.addAgentItem(item.value);stage.value='done';say('已加入 Outbound 分类，已选中并进入报价预览和导出。接下来保存版本、线下发送给客户，再标记 Sent：Demo 会同时生成给 Billing Engine 和业务系统负责人的通知。Archived 时再模拟同步三类配置。');}
+  catch{error.value='无法新增：请确认有新增权限、当前为 Draft，且该项目尚未在此报价中。';}
+}
+function answer(text=input.value.trim()){
+  if(!text.trim())return;input.value='';error.value='';messages.value.push({role:'user',text});
+  if(stage.value==='intro'||stage.value==='done'){
+    scenario.value=scenarioOf(text);need.value=text;rate.value=parsePrice(text);
+    if(!scenario.value){say('这里是可交互的脚本演示，尚未连接 LLM。请选择下方三个例子之一，或描述“贴标”“双人封签核验”“电池荷电状态检查”。生产版会检索完整目录并动态追问。');return;}
+    if(scenario.value==='battery'&&!/30\s*%/.test(text)){say('电池演示采用“超过 30%”的固定案例。你可以点击该案例开始；其他阈值需要接入 LLM 后支持，不会替你默默改写需求。');scenario.value=null;return;}
+    stage.value='recommend';say('我先检查现有标准项目。下面列出可能相关的 item：先判断服务含义是否一致；只有价格不同，不需要新建 Code。请选择“使用这个项目”，或说明为什么仍然不满足。');
+  }else if(stage.value==='recommend'){if(/不满足|不能|不支持|仍然|新增|新建|不适用/.test(text))propose();else say('可以选择下方的已有项目；如果服务本身不同，请说明现有项目缺少什么，例如“不支持双人核验，需要新建”。');}
+  else if(stage.value==='trigger'){if(/对|确认|是的|正确|只收一次|yes|correct/i.test(text))askPriceOrLimits();else say('这个演示只覆盖上面的明确触发条件与按箱一次计费。如果实际需求不同，请重新开始或选择另一个例子；不会在信息不确定时生成 item。');}
+  else if(stage.value==='price'){const p=parsePrice(text);if(p===null)say('请说明每箱金额和币种，例如“每箱 2 美元”。');else{rate.value=p;askPriceOrLimits();}}
+  else if(stage.value==='limits'){if(/没有|不设|无|none|no /i.test(text))review();else say('已听到你有其他计价条件。当前脚本仅演示无最低费和封顶的 UNIT_RATE；不会忽略这项需求自动新增。请使用演示答案，或留给正式 LLM 扩展。');}
+  else if(stage.value==='review'){if(/确认|添加|加入|可以|yes/i.test(text))add();else say('可以先查看生成配置；如摘要与实际意图不同，请重新开始，不会自动添加。');}
+}
+function reuse(id:string){if(!editable.value)return;const s=store.sel(id);if(!s.on&&catalog.defaultPreset[id])Object.assign(s,JSON.parse(JSON.stringify(catalog.defaultPreset[id])));s.on=true;if(rate.value!==null)s.price=rate.value;store.touch();stage.value='done';say('已选用现有标准 item，并按你明确描述的美元价格配置。本次未新建 Billing Item。请在对应分类及报价预览中核对。');}
+watch(()=>messages.value.length,async()=>{await nextTick();feed.value?.scrollTo({top:feed.value.scrollHeight,behavior:'smooth'});});
+watch(()=>store.quote.value?.id,reset);
 </script>
 <template>
-  <section class="item-assistant no-print" data-training="new-item">
-    <div class="bar"><div><strong>{{ t('标准收费项目', 'Standard charge catalog') }}</strong><div class="hint">{{ t('先复用，再申请；新增设计不会自动成为可计费项目。', 'Reuse before requesting. A design request is not an active billable item.') }}</div></div><button class="btn sm" :aria-expanded="open" @click="open = !open">{{ open ? t('收起', 'Collapse') : t('查找 / 申请项目', 'Find / request an item') }}</button></div>
-    <details class="access"><summary>{{ t('Demo 角色预览（不是真实权限配置）', 'Demo role preview (not real access control)') }} · {{ roles.find(r => r.id === store.demoAccess.role)?.label }}</summary><label>{{ t('模拟角色', 'Simulated role') }} <select class="input" v-model="store.demoAccess.role"><option v-for="role in roles" :key="role.id" :value="role.id">{{ role.label }}</option></select></label><p class="hint">{{ t('正式系统由管理员分配用户组，并在 API 校验权限、客户及仓库范围。此切换只演示不同角色的操作。', 'Production roles are assigned by an administrator and enforced by APIs with customer/facility scope. This switch demonstrates roles only.') }}</p></details>
-    <div v-if="open" class="workspace">
-      <h3>{{ t('1. 描述需求，先找现有项目', '1. Describe the need and find existing items') }}</h3>
-      <p class="note info">{{ t('AI 工作流原型：当前仅做本地目录关键词匹配，尚未连接大模型、Billing Engine、BNP 或 Fact 字典。没有匹配结果不代表需要新增项目。', 'AI workflow prototype: local keyword matching only. No LLM, Billing Engine, BNP or Fact dictionary is connected. No match does not prove a new item is needed.') }}</p>
-      <label>{{ t('Service category（查找可不选，申请必选）', 'Service category (required for requests)') }}<select class="input" v-model="categoryId"><option value="">{{ t('所有分类', 'All categories') }}</option><option v-for="c in catalog.categories" :key="c.id" :value="c.id">{{ T.tc(c.name) }}</option></select></label>
-      <label>{{ t('你想对什么服务收费？什么情况下发生？按什么数量和单位计费？', 'What service is charged, when does it occur, and what quantity/UOM drives the charge?') }}<textarea class="input" rows="3" v-model="need" :placeholder="t('例如：对贴标服务按每张标签收费，仅特定客户适用。可输入 label / labeling 等目录关键词。', 'Example: charge per label for labeling, for selected customers only.')" /></label>
-      <button class="btn primary sm" :disabled="!need.trim()" @click="searched = true; message = ''">{{ t('查找现有标准项目', 'Find existing standard items') }}</button>
-      <div v-if="searched" class="results"><p v-if="!candidates.length">{{ t('暂无关键词匹配，请尝试英文服务关键词或其他分类，再由目录管理员确认。', 'No keyword matches. Try English service terms or another category, then ask a catalog admin to review.') }}</p><article v-for="candidate in candidates" :key="candidate.charge.id"><div><strong>{{ T.tc(candidate.charge.name) }}</strong><div class="hint">{{ candidate.charge.id }} · {{ T.tc(candidate.category.name) }}</div><p>{{ T.tc(candidate.charge.desc) }}</p></div><button class="btn sm" :disabled="!editable" @click="useExisting(candidate.charge.id)">{{ t('选用现有项目', 'Use existing item') }}</button></article>
-      <p class="hint">{{ t('现有服务能支持、只是价格或条件不同：配置已有项目，不新建 Code。', 'If only rates or conditions differ, configure the existing service rather than creating a new code.') }}</p>
-      <button v-if="canPropose(store.demoAccess.role)" class="btn sm" :disabled="!editable" @click="extending = !extending">{{ t('现有项目不支持 → 说明缺口并申请', 'Existing items do not fit → explain the gap') }}</button><p v-else class="hint">{{ t('当前角色不能提交新项目。Pricing Specialist 才可发起；Catalog Admin 审批。', 'This role cannot request new items. Pricing Specialists propose; Catalog Admins review.') }}</p></div>
-      <form v-if="extending && canPropose(store.demoAccess.role)" @submit.prevent="submit">
-        <h3>{{ t('2. 说明缺口并补齐设计信息', '2. Explain the gap and complete the design') }}</h3>
-        <label>{{ t('为什么推荐的现有项目无法支持？具体缺少什么？', 'Why do the existing recommendations fail? What is missing?') }}<textarea required class="input" v-model="gap" rows="3" /></label>
-        <p class="hint">{{ t('字段依据你提供的页面整理。正式版本必须使用后端字典及 Schema 校验；Default Rate 不自动填入客户报价。规则及新 Item 默认 Inactive。', 'Fields reflect the supplied screens. Production must use backend dictionaries and schema validation. Default Rate must not populate customer pricing. New items and rules default to Inactive.') }}</p>
-        <details v-for="(group,i) in groups" :key="group" :open="i === 0" class="group"><summary>{{ group }} · {{ designFields.filter(f => f.group === group && f.required && !fields[f.id]?.trim()).length }} {{ t('项待填', 'required remaining') }}</summary><div class="fields"><label v-for="f in designFields.filter(f => f.group === group)" :key="f.id" :class="{wide:f.type === 'textarea'}">{{ f.label }}{{ f.required ? ' *' : '' }}<select v-if="f.options" class="input" v-model="fields[f.id]" :disabled="!editable"><option v-for="option in f.options" :key="option">{{ option }}</option></select><textarea v-else-if="f.type === 'textarea'" class="input" rows="3" v-model="fields[f.id]" :disabled="!editable"/><input v-else class="input" :type="f.type || 'text'" v-model="fields[f.id]" :disabled="!editable" :min="f.type === 'number' ? '0' : undefined" :step="f.type === 'number' ? 'any' : undefined" /></label></div></details>
-        <p role="status">{{ t('必填与校验待处理', 'Required fields / validation remaining') }}: {{ missing.length }}</p><button class="btn primary" type="submit" :disabled="!editable || !!missing.length">{{ t('提交新项目设计审批', 'Submit design for approval') }}</button>
-      </form>
-      <div v-if="requests.length"><h3>{{ t('3. 审批与技术就绪（模拟）', '3. Approval and technical readiness (simulation)') }}</h3><p class="hint">{{ t('这些是设计申请，不会出现在当前报价金额或导出费率中；须由开发接入真实项目后才能报价。', 'These are design requests, excluded from quoted/exported rates. Development must integrate real items before they can be quoted.') }}</p><article v-for="r in requests" :key="r.id" class="request"><strong>{{ r.fields.name }} · {{ r.fields.code }}</strong><span class="tag">{{ r.status }}</span><p>{{ T.tc(catalog.categories.find(c => c.id === r.categoryId)?.name) }} · {{ r.fields.factAvailability }}</p><p>{{ r.gap }}</p><div class="actions"><button class="btn sm" @click="exportPacket(r)">{{ t('导出设计包', 'Export design packet') }}</button><button v-if="canApprove(store.demoAccess.role) && r.status === 'submitted'" class="btn sm" @click="approve(r)">{{ t('模拟审批：预建 Inactive 配置', 'Simulate approval: prepare inactive configuration') }}</button></div><div v-if="store.demoAccess.role === 'integration_engineer' && r.status === 'approved'"><label>{{ t('Fact 合同、真实样例及外部适配验收证据', 'Fact contract, source sample and adaptation evidence') }}<textarea class="input" v-model="factEvidence" /></label><label>{{ t('试算、重复／重放、缺失字段和生效边界测试结果', 'Dry run, duplicate/replay, missing-field and effective-boundary test evidence') }}<textarea class="input" v-model="testEvidence" /></label><button class="btn sm" :disabled="!factEvidence.trim() || !testEvidence.trim()" @click="verify(r)">{{ t('模拟登记技术就绪', 'Simulate technical readiness') }}</button></div></article></div>
-      <p v-if="message" class="note info" role="status">{{ message }}</p>
+<section class="agent no-print" data-training="new-item">
+  <div class="bar"><div><strong>Billing AI Agent</strong><p class="hint">用一句话描述你想收费的服务，Agent 先找已有项目，再对话生成新项目。</p></div><button class="btn primary" :aria-expanded="open" @click="open=!open">{{open?'收起对话':'与 Agent 对话'}}</button></div>
+  <details class="role"><summary>Demo 权限预览 · {{roles.find(r=>r.id===store.demoAccess.role)?.label}}</summary><select class="input" v-model="store.demoAccess.role"><option v-for="r in roles" :key="r.id" :value="r.id">{{r.label}}</option></select><p class="hint">只有三类角色。此切换仅用于演示；生产权限由 Admin 管理、后端校验。</p></details>
+  <div v-if="open" class="workspace">
+    <p class="demo">脚本演示，未接入 LLM。以下例子展示正式 Agent 的对话方式；不会发送真实通知或写入真实 Billing Engine。</p>
+    <div class="examples"><button v-for="e in examples" :key="e.id" class="btn sm" :disabled="!editable" @click="start(e.prompt)">{{e.label}}</button></div>
+    <div class="conversation" ref="feed" aria-live="polite"><p v-if="!messages.length" class="greeting">你好，你希望对什么服务收费？可以直接说服务、发生场景和收费方式，也可以点击上方例子开始。</p><div v-for="(m,i) in messages" :key="i" class="message" :class="m.role"><span>{{m.role==='user'?'你':'Billing Agent'}}</span><p>{{m.text}}</p></div>
+      <div v-if="stage==='recommend'" class="recommendations"><article v-for="c in candidates" :key="c.id"><strong>{{T.tc(c.name)}}</strong><p class="hint">{{c.id}} · {{T.tc(c.desc)}}</p><button class="btn sm" :disabled="!editable" @click="reuse(c.id)">使用这个项目</button></article><button v-if="scenario!=='label'" class="btn" :disabled="!editable" @click="answer(scenario==='seal'?'这些项目不能表达双人封签核验，需要新建。':'这些项目不支持按每箱荷电状态超过30%触发收费，需要新建。')">仍不满足，说明缺口并继续新建</button></div>
+      <button v-if="stage==='trigger'" class="btn sm" @click="answer('对，只对符合条件的每箱收一次。')">对，只对符合条件的每箱收一次</button>
+      <button v-if="stage==='price'" class="btn sm" @click="answer('每箱 2 美元')">演示回答：每箱 2 美元</button>
+      <button v-if="stage==='limits'" class="btn sm" @click="answer('没有最低费和封顶，按实际箱数计费。')">没有最低费和封顶</button>
+      <div v-if="stage==='review'&&item" class="review"><details><summary>查看 Agent 生成的配置（开发预览）</summary><p class="hint">Code、字典及 Fact 字段为示例占位，生产版需要匹配真实字典；用户无需填写这些字段。</p><pre>{{JSON.stringify(item.configuration,null,2)}}</pre></details><button class="btn primary" :disabled="!editable||!canPropose(store.demoAccess.role)" @click="answer('确认，加入报价')">确认，加入报价</button></div>
     </div>
-  </section>
+    <form @submit.prevent="answer()"><input class="input" v-model="input" maxlength="1200" placeholder="描述服务，或回答 Agent 的问题…" :disabled="!editable" aria-label="与 Billing Agent 对话"/><button class="btn primary" :disabled="!input.trim()||!editable">发送</button></form><button class="btn ghost sm" @click="reset">重新开始对话</button><p v-if="error" role="alert">{{error}}</p>
+  </div>
+  <div v-if="items.length" class="lifecycle"><strong>本报价的 Agent 新增项目：{{items.length}}</strong><p class="hint">已加入相应 Service Category，并参与报价与导出。Sent 时通知负责人评估开发；Archived 时同步 Item、Rule 和 Price List。</p>
+    <article v-for="i in items" :key="i.id"><span>{{T.tc(i.charge.name)}} · {{i.requiresDevelopment?'涉及新 Fact／适配':'示例假设已有 Fact，待负责人确认'}}</span><button v-if="store.demoAccess.role==='system_admin'&&['sent','accepted'].includes(store.quote.value?.status??'')" class="btn sm" :disabled="!!store.agentReadiness[`${store.quote.value!.id}:${store.quote.value!.acceptedVersion??store.quote.value!.sentVersion}:${i.id}`]" @click="store.confirmAgentReadiness(store.quote.value!.id,i.id)">模拟负责人反馈：无需开发／适配已完成</button><details><summary>查看该项目的 AI 生成配置</summary><pre>{{JSON.stringify(i.configuration,null,2)}}</pre></details></article>
+    <details v-if="notices.length"><summary>发送时的负责人通知预览（模拟）</summary><div v-for="n in notices" :key="n.id"><p>报价 v{{n.version}} → {{n.recipients.join(' + ')}}</p><p class="hint">新增：{{n.itemIds.join(', ')}}。请判断是否需要开发，并反馈 Fact／业务系统支持情况。实际未发送。</p></div></details>
+    <p v-if="sync" class="note info">归档同步模拟完成：{{sync.billingItems.length}} 个 Billing Item、{{sync.recognitionRules.length}} 个 Rule，以及对应 Price List。真实系统未被修改。</p>
+  </div>
+</section>
 </template>
 <style scoped>
-.item-assistant{border:1px solid var(--border);background:var(--card);border-radius:10px;margin:12px 0 20px;padding:14px 16px}.bar,.actions{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}.access{margin-top:10px;font-size:12px;color:var(--muted-fg)}summary{cursor:pointer}.workspace{border-top:1px solid var(--border);margin-top:14px;padding-top:8px}.workspace label{display:flex;flex-direction:column;gap:6px;margin:12px 0}.workspace p{line-height:1.6}.results article,.request{border:1px solid var(--border);padding:12px;border-radius:8px;margin:12px 0}.results article{display:flex;align-items:center;justify-content:space-between;gap:16px}.results article p{margin:4px 0}.group{border-top:1px solid var(--border);padding:14px 0}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}.fields .wide{grid-column:span 2}.input{min-width:0;max-width:100%}.tag{margin-left:10px}.request .actions{justify-content:flex-start}@media(max-width:750px){.fields{grid-template-columns:minmax(0,1fr)}.fields .wide{grid-column:auto}.results article{align-items:stretch;flex-direction:column}}
+.agent{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:16px;margin:16px 0}.bar{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}.bar p{margin:4px 0}.role{margin:12px 0;font-size:12px;color:var(--muted-fg)}summary{cursor:pointer}.demo{font-size:12px;color:var(--muted-fg)}.examples{display:flex;gap:8px;flex-wrap:wrap}.conversation{max-height:520px;overflow:auto;margin:16px 0;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)}.message{padding:12px 16px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin:12px 8% 12px 0}.message.user{margin-left:14%;margin-right:0;background:var(--accent)}.message span{font-size:11px;color:var(--muted-fg)}.message p{white-space:pre-wrap;margin:6px 0;line-height:1.7}.recommendations article{padding:12px;border:1px solid var(--border);border-radius:8px;margin:10px 0}.review{display:grid;gap:14px;margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}form{display:flex;gap:8px}form input{flex:1;min-width:0}.lifecycle{border-top:1px solid var(--border);padding-top:14px;margin-top:14px}.lifecycle article{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 0}.lifecycle details{margin:14px 0}
 </style>

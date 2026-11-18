@@ -3,7 +3,7 @@
 // and every change is written to the API in order (drafts debounced, with If-Match so concurrent editors never overwrite each other).
 import { computed, reactive, watch } from "vue";
 import catalogJson from "../data/catalog.json";
-import { canPropose, canApprove, missingFields, assertRequestReady, type BillingRequest, type DemoRole } from "./billingRequests";
+import { canPropose, type BillingRequest, type DemoRole, type AgentItem, type AgentNotification, type AgentSync } from "./billingRequests";
 import { demoPriceLists } from "./priceLists";
 import { mapQuote, summarize } from "./codemap";
 import { emptySel, quoteLines } from "./engine";
@@ -145,6 +145,9 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
   const lists = reactive(priceLists);
   const billingRequests = reactive(repo.load<BillingRequest[]>("billingRequests", []));
   const demoAccess = reactive({ role: 'quote_user' as DemoRole });
+  const agentNotifications = reactive(repo.load<AgentNotification[]>('agentNotifications', []));
+  const agentSyncs = reactive(repo.load<AgentSync[]>('agentSyncs', []));
+  const agentReadiness = reactive(repo.load<Record<string,boolean>>('agentReadiness', {}));
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const persist = () => {
@@ -153,13 +156,14 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
       repo.save("quotes", state.quotes);
       repo.save("priceLists", lists);
       repo.save("billingRequests", billingRequests);
+      repo.save("agentNotifications", agentNotifications); repo.save("agentSyncs", agentSyncs); repo.save("agentReadiness", agentReadiness);
       repo.save("history", state.history.slice(0, 500));
     }
     repo.save("prefs", state.prefs);
     repo.save("current", state.currentQuoteId);
     state.lastSaved = now();
   };
-  watch(() => [state.customers, state.quotes, lists, billingRequests, state.history, state.prefs, state.currentQuoteId], () => {
+  watch(() => [state.customers, state.quotes, lists, billingRequests, agentNotifications, agentSyncs, agentReadiness, state.history, state.prefs, state.currentQuoteId], () => {
     clearTimeout(timer);
     timer = setTimeout(persist, 400);
   }, { deep: true });
@@ -283,25 +287,22 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
 
   return {
     state, quote, customer, readOnly, data, latestVersion, dirty, sel, touch, log,
-    priceLists: lists, billingRequests, demoAccess,
-    submitBillingRequest(input: Omit<BillingRequest, 'id' | 'quoteId' | 'status' | 'createdBy'>) {
-      if (remote || !canPropose(demoAccess.role) || quote.value?.status !== 'draft') throw new Error('Not permitted');
-      if (missingFields(input).length) throw new Error('Complete required fields');
-      const code = input.fields.code.trim().toLowerCase(), name = input.fields.name.trim().toLowerCase();
-      const charges = catalog.categories.flatMap(c => c.charges);
-      if (charges.some(c => c.id.toLowerCase() === code || c.codes.some(x => x.toLowerCase() === code) || c.name.toLowerCase() === name) || Object.keys(catalog.systemCodes).some(x => x.toLowerCase() === code) || billingRequests.some(r => r.fields.code.trim().toLowerCase() === code)) throw new Error('Duplicate item or request');
-      const request: BillingRequest = { ...clone(input), id: uid(), quoteId: quote.value.id, status: 'submitted', createdBy: `demo:${demoAccess.role}` };
-      billingRequests.push(request); touch(); return request;
+    priceLists: lists, demoAccess, agentNotifications, agentSyncs, agentReadiness,
+    addAgentItem(item: AgentItem) {
+      if (remote || !canPropose(demoAccess.role) || quote.value?.status !== 'draft' || readOnly.value) throw new Error('New item permission required');
+      const q = quote.value;
+      const standard = catalog.categories.flatMap(c=>c.charges);
+      if (!catalog.categories.some(c=>c.id === item.categoryId) || standard.some(c=>c.id.toLowerCase() === item.id.toLowerCase() || c.name.toLowerCase() === item.charge.name.toLowerCase()) || q.draft.agentItems?.some(i=>i.id === item.id)) throw new Error('Duplicate or invalid item');
+      if (item.id !== item.charge.id || !Number.isFinite(item.price) || item.price < 0 || !item.need.trim() || !item.trigger.trim() || !item.quantity.trim() || !item.limits.trim()) throw new Error('Incomplete intent');
+      q.draft.agentItems ??= []; q.draft.agentItems.push(clone(item));
+      q.draft.selections[item.id] = {...emptySel(), on:true, price:item.price}; touch();
     },
-    approveBillingRequest(id: string) {
-      const r = billingRequests.find(r => r.id === id);
-      if (remote || !r || !canApprove(demoAccess.role) || r.createdBy === `demo:${demoAccess.role}` || r.status !== 'submitted' || missingFields(r).length) throw new Error('Not permitted');
-      r.status = 'approved'; r.approvedBy = `demo:${demoAccess.role}`;
-    },
-    verifyBillingRequest(id: string, factEvidence: string, testEvidence: string) {
-      const r = billingRequests.find(r => r.id === id);
-      if (remote || !r || demoAccess.role !== 'integration_engineer' || r.status !== 'approved' || !factEvidence.trim() || !testEvidence.trim()) throw new Error('Evidence required');
-      r.factEvidence = factEvidence.trim(); r.testEvidence = testEvidence.trim(); r.verifiedBy = `demo:${demoAccess.role}`; r.status = 'ready';
+    confirmAgentReadiness(quoteId:string, itemId:string) {
+      const q = state.quotes.find(q=>q.id===quoteId);
+      if (remote || demoAccess.role !== 'system_admin' || !q || !['sent','accepted'].includes(q.status)) throw new Error('Admin review required');
+      const v = q.versions.find(v=>v.v===(q.acceptedVersion ?? q.sentVersion));
+      if (!v?.data.agentItems?.some(i=>i.id===itemId)) throw new Error('Item not found');
+      agentReadiness[`${q.id}:${v.v}:${itemId}`] = true;
     },
     openQuote(id: string) {
       state.currentQuoteId = id;
@@ -317,6 +318,7 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
       const draft = newQuoteData("", !!options?.blank);
       if (source) {
         draft.selections = clone(source.data.selections);
+        if (source.data.agentItems) draft.agentItems = clone(source.data.agentItems);
         draft.header.facility = source.data.header.facility;
         draft.header.title = `Quotation from ${source.number}`;
       }
@@ -416,21 +418,26 @@ export function createStore(repo: Repo = localRepo, boot?: Bootstrap) {
           q.acceptedVersion = version.v;
         }
       }
+      if (s === 'sent' && !remote) {
+        const version = q.versions.at(-1)!;
+        const items = (version.data.agentItems ?? []).filter(i=>version.data.selections[i.id]?.on);
+        if (items.length && !agentNotifications.some(n=>n.quoteId===q.id && n.version===version.v)) {
+          agentNotifications.push({id:uid(),quoteId:q.id,version:version.v,itemIds:items.map(i=>i.id),recipients:['Billing Engine owner','Business system owner'],mode:'simulation',status:'prepared',message:`Review new billing items, recognition rules and Fact/development dependencies for ${q.number} v${version.v}.`});
+        }
+      }
       if (s === 'archived') {
         if (remote) throw new Error('Price-list publication API is not connected');
-        const requests = billingRequests.filter(r => r.quoteId === q.id);
-        if (demoAccess.role !== 'pricing_publisher') throw new Error('Pricing Publisher required');
-        requests.forEach(assertRequestReady);
-        // This prototype has no new-item provisioning/quote-rate API. Never represent a design packet as a published billable item.
-        if (requests.length) throw new Error('New-item designs require real Billing Engine and quotation-rate integration before publication');
         const accepted = q.versions.find(v => v.v === q.acceptedVersion);
         if (!accepted) throw new Error('Accepted version required');
+        const items = (accepted.data.agentItems ?? []).filter(i=>accepted.data.selections[i.id]?.on);
+        if (items.some(i=>!agentReadiness[`${q.id}:${accepted.v}:${i.id}`])) throw new Error('Owner review / development not complete');
         // Local publication simulation: idempotent snapshot, no automatic invalidation of old price lists.
         let published = lists.find(p => p.sourceQuoteId === q.id && p.sourceVersion === accepted.v);
         if (!published) {
-          published = { id: uid(), customerId: q.customerId, number: `${state.customers.find(c => c.id === q.customerId)?.code || 'DEMO'}-PL-${q.number}-v${accepted.v}`, effectiveDate: accepted.data.header.effectiveDate, endDate: null, data: clone(accepted.data), demo: true, sourceQuoteId: q.id, sourceVersion: accepted.v, newItemDesigns: clone(requests) };
+          published = { id: uid(), customerId: q.customerId, number: `${state.customers.find(c => c.id === q.customerId)?.code || 'DEMO'}-PL-${q.number}-v${accepted.v}`, effectiveDate: accepted.data.header.effectiveDate, endDate: null, data: clone(accepted.data), demo: true, sourceQuoteId: q.id, sourceVersion: accepted.v };
           lists.push(published);
         }
+        if (!agentSyncs.some(x=>x.quoteId===q.id && x.version===accepted.v)) agentSyncs.push({id:uid(),quoteId:q.id,version:accepted.v,itemIds:items.map(i=>i.id),billingItems:items.map(i=>({...clone(i.configuration.billingItem),active:true})),recognitionRules:items.map(i=>({...clone(i.configuration.recognitionRule),active:true})),priceListId:published.id,mode:'simulation',status:'complete'});
         q.publishedPriceListId = published.id; q.publishedAt = now();
       }
       q.status = s;
