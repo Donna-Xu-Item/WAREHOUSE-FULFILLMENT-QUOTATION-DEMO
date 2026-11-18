@@ -20,14 +20,14 @@ export const examples = [
   { id:'battery',label:'例 3 · 新增电池合规检查，涉及新 Fact',prompt:'出库电池箱需要检查荷电状态，超过 30% 的箱子每箱收 3 美元。'},
 ] as const;
 export function scenarioOf(text:string): 'label'|'seal'|'battery'|null {
-  if (/电池|荷电|battery|charge.percent|soc\b/i.test(text)) return 'battery';
-  if (/封签|seal/i.test(text)) return 'seal';
-  if (/贴标|标签|label/i.test(text)) return 'label';
+  if (/电池|荷电|battery|バッテリー|bater[ií]a|charge.percent|soc\b/i.test(text)) return 'battery';
+  if (/封签|seal|封印|sello/i.test(text)) return 'seal';
+  if (/贴标|标签|label|ラベル|etiquet/i.test(text)) return 'label';
   return null;
 }
 export function suggestedIds(scenario:string) { return scenario === 'label' ? ['VA-RELABEL','VA-FNSKU','OB-LABEL'] : scenario === 'seal' ? ['VA-PHOTO','OB-LABEL','OB-ROUTING'] : ['SC-IOT','OB-ROUTING','VA-PHOTO']; }
 export function parsePrice(text:string):number|null {
-  const match=text.match(/(?:\$|USD\s*)(\d+(?:\.\d+)?)/i) ?? text.match(/(\d+(?:\.\d+)?)\s*(?:美元|美金|USD|dollars?)/i);
+  const match=text.match(/(?:\$|USD\s*)(\d+(?:\.\d+)?)/i) ?? text.match(/(\d+(?:\.\d+)?)\s*(?:美元|美金|米ドル|d[oó]lares|USD|dollars?)/i);
   return match && Number.isFinite(Number(match[1])) ? Number(match[1]) : null;
 }
 export function makeAgentItem(scenario:'seal'|'battery',price:number,context:{customerId:string;facility:string;effectiveDate:string}, need:string):AgentItem {

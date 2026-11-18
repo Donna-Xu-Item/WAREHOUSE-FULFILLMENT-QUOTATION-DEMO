@@ -60,5 +60,5 @@ describe('manual lifecycle publishes local price lists at archive', () => {
   });
 });
 it('offers bilingual creation, cloning, version and status learning topics', () => {
-  for (const zh of [true,false]) expect(extraTrainingTopics(zh).map(t => t.target)).toEqual(['create','clone','quotes','versions','sent','accepted','archived','bnp']);
+  for (const zh of [true,false]) expect(extraTrainingTopics(zh).map(t => t.target)).toEqual(['create','clone','quotes','versions','sent','accepted','archived','bnp','new-item','agent-chat','owner-notice','owner-ready']);
 });

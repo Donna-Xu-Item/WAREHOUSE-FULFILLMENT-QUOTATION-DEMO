@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watchEffect } from "vue";
 import itemLogoDark from "./assets/brand/item-white-logo.svg";
 import itemLogoLight from "./assets/brand/item-logo-fullcolor-blacktxt.svg";
+import { agentText } from "./i18n/billingAgent";
 import { effectiveCatalog } from "./lib/billingRequests";
 import BillingItemAssistant from "./components/BillingItemAssistant.vue";
 import NewQuoteDrawer from "./components/NewQuoteDrawer.vue";
@@ -27,6 +28,7 @@ const store = props.store ?? createStore();
 const { T } = provideApp(store);
 const st = store.state;
 const drawer = ref<"" | "customers" | "versions" | "history" | "mapping">("");
+const billingAgentOpen = ref(false);
 const creating = ref(false);
 const creatingClone = ref(false);
 const creatingCustomer = ref<string>();
@@ -199,8 +201,6 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
           <span v-if="flash" class="tag ok" role="status">{{ flash }}</span>
         </div>
 
-        <BillingItemAssistant />
-
         <div data-training="charges" class="filters no-print">
           <input class="input search" type="search" v-model="search" :placeholder="T.t('e.search')" :aria-label="T.t('e.search')" />
           <div class="chips" role="group" aria-label="Channel">
@@ -210,7 +210,9 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
           </div>
           <span class="sp"></span>
           <label class="switch"><input type="checkbox" v-model="st.prefs.showAll" /><span class="track" aria-hidden="true"></span>{{ T.t("h.showAll") }}</label>
+          <button data-training="new-item" class="btn ghost sm" :aria-expanded="billingAgentOpen" aria-controls="billing-agent-panel" @click="billingAgentOpen = !billingAgentOpen">{{ agentText(st.prefs.lang, 'newItem') }}</button>
         </div>
+        <BillingItemAssistant v-model:open="billingAgentOpen" />
         <p v-if="!anyMatch" class="muted no-print">{{ T.t("e.noMatch") }}</p>
 
         <section v-for="c in cats" v-show="c.main.length || c.adv.length" :key="c.cat.id" :id="`cat-${c.cat.id}`" class="cat no-print" :aria-labelledby="`h-${c.cat.id}`">
@@ -243,7 +245,7 @@ const itemLogo = computed(() => (st.prefs.theme === "light" ? itemLogoLight : it
     <span v-if="st.lastSaved && !st.user" class="hint">{{ T.t("v.autosaved") }}</span>
   </footer>
 
-  <TrainingAssistant @navigate="target => { if (target === 'create' || target === 'clone') { newQuote(store.customer.value?.id); creatingClone = target === 'clone'; } else { creating = false; } if (target === 'details') detailsOpen = true; if (target !== 'customer' && target !== 'save') proposalOnly = false; }" />
+  <TrainingAssistant @navigate="target => { if (target === 'agent-chat') billingAgentOpen = true; if (target === 'create' || target === 'clone') { newQuote(store.customer.value?.id); creatingClone = target === 'clone'; } else { creating = false; } if (target === 'details') detailsOpen = true; if (target !== 'customer' && target !== 'save') proposalOnly = false; }" />
   <NewQuoteDrawer v-if="creating" :customer-id="creatingCustomer" :start-clone="creatingClone" :key="String(creatingClone)" @close="creating = false" />
   <CustomersDrawer v-if="drawer === 'customers'" @create="newQuote" @close="drawer = ''" />
   <VersionsDrawer v-if="drawer === 'versions' && store.quote.value" @close="drawer = ''" />

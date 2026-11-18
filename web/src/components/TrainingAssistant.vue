@@ -8,7 +8,7 @@ const emit = defineEmits<{ navigate: [target: string] }>();
 const zh = computed(() => store.state.prefs.lang === 'zh');
 const txt = (cn: string, en: string) => zh.value ? cn : en;
 const open = ref(false), welcome = ref(false), step = ref(-1), input = ref('');
-const messages = ref<{ role: 'user' | 'assistant'; text: string }[]>([]);
+const messages = ref<{ role: 'user' | 'assistant'; text: string; topic?: string; fallback?: boolean }[]>([]);
 const feed = ref<HTMLElement>();
 const key = 'unis-quotation-training-v2';
 const baseTopics = computed(() => [
@@ -19,13 +19,14 @@ const baseTopics = computed(() => [
   { target: 'save', title: txt('保存并检查版本', 'Save and review a version'), q: txt('自动保存和保存版本有什么区别？', 'What is the difference between autosave and a saved version?'), a: txt('草稿会保留编辑状态；「保存版本」会建立可查看的版本记录。保存前检查 Charge Code Mapping，并填写版本备注。查看旧版本时页面为只读，可返回草稿或恢复该版本。', 'The draft retains your edits. Save version creates a version record you can review later. Check Charge Code Mapping and add a note before saving. Older versions are read-only; return to the draft or restore a version to continue editing.'), keywords: ['保存','mapping','save','autosave'] },
   { target: 'proposal', title: txt('预览与导出', 'Preview and export'), q: txt('如何导出报价或生成 PDF？', 'How do I export a quote or create a PDF?'), a: txt('前往页面下方的报价预览，检查客户、有效期、服务和费率，并选择报价语言。使用 Excel 导出，或点击打印，在浏览器打印窗口中选择「另存为 PDF」。发送给客户前请再次检查最终文件。', 'Go to the proposal preview, review the customer, validity, services and rates, and choose the proposal language. Export Excel, or choose Print and select Save as PDF in your browser. Review the final file before sending it to a customer.'), keywords: ['导出','打印','预览','语言','pdf','excel','export','print','preview','language'] },
 ]);
-const topics = computed(() => { const extra = extraTrainingTopics(zh.value); const base = baseTopics.value; return [base[0]!, ...extra.slice(0, 3), ...base.slice(1, 5), extra[3]!, base[5]!, ...extra.slice(4)]; });
+const topics = computed(() => { const extra = extraTrainingTopics(zh.value); const base = baseTopics.value; return [base[0]!, ...extra.slice(0, 3), ...base.slice(1, 4), extra[8]!, extra[9]!, base[4]!, extra[3]!, base[5]!, extra[4]!, extra[10]!, extra[5]!, extra[11]!, extra[6]!, extra[7]!]; });
 const active = computed(() => topics.value[step.value]);
 let highlighted: HTMLElement | null = null;
 function clearHighlight() { highlighted?.classList.remove('training-highlight'); highlighted = null; }
 async function locate(target: string) {
-  const anchor = ['sent', 'accepted', 'archived', 'bnp'].includes(target) ? 'status' : target;
-  emit('navigate', target);
+  const agent = ['agent-chat', 'owner-notice', 'owner-ready'].includes(target);
+  const anchor = agent ? 'agent-chat' : ['sent', 'accepted', 'archived', 'bnp'].includes(target) ? 'status' : target;
+  emit('navigate', agent ? 'agent-chat' : target);
   await nextTick();
   clearHighlight();
   highlighted = document.querySelector<HTMLElement>(`[data-training="${anchor}"]`);
@@ -43,7 +44,7 @@ function ask(index?: number) {
   const normalized = question.toLowerCase();
   const ranked = topics.value.map(topic => ({ topic, score: topic.keywords.reduce((n, word) => n + (normalized.includes(word) ? 1 : 0), 0) })).sort((a,b) => b.score-a.score);
   const topic = index === undefined ? (ranked[0]!.score > 0 ? ranked[0]!.topic : undefined) : topics.value[index];
-  messages.value.push({ role: 'user', text: question }, { role: 'assistant', text: topic?.a ?? txt('知识库暂未覆盖这个问题。你可以点击下方常见问题，或联系报价负责人确认业务规则和特殊费率。请勿在此输入客户敏感资料。', 'This question is not covered by the training knowledge base yet. Try a suggested question below, or ask your quotation owner about business rules and special rates. Please avoid entering sensitive customer information.') });
+  messages.value.push({ role: 'user', text: question, topic: index === undefined ? undefined : topic?.target }, { role: 'assistant', topic: topic?.target, fallback: !topic, text: topic?.a ?? txt('知识库暂未覆盖这个问题。你可以点击下方常见问题，或联系报价负责人确认业务规则和特殊费率。请勿在此输入客户敏感资料。', 'This question is not covered by the training knowledge base yet. Try a suggested question below, or ask your quotation owner about business rules and special rates. Please avoid entering sensitive customer information.') });
   input.value = '';
 }
 watch(() => messages.value.length, async () => { await nextTick(); feed.value?.scrollTo({ top: feed.value.scrollHeight, behavior: 'smooth' }); });
@@ -58,9 +59,9 @@ onUnmounted(() => { document.body.classList.remove('training-open'); clearHighli
     <section v-if="open" id="training-panel" class="panel" role="region" :aria-label="txt('学习与帮助', 'Learn and get help')">
       <header><div><span class="eyebrow">QUOTATION ACADEMY</span><h2>{{ txt('报价学习助手', 'Quotation assistant') }}</h2></div><button class="btn sm" @click="close" :aria-label="txt('关闭助手', 'Close assistant')">×</button></header>
       <div class="body" ref="feed">
-        <template v-if="welcome"><span class="badge">{{ txt('首次使用 · 约 5 分钟', 'FIRST VISIT · ABOUT 5 MIN') }}</span><h3>{{ txt('从第一份报价开始', 'Build your first quotation') }}</h3><p>{{ txt('跟随 完整界面导览，了解从选择客户到导出报价的完整流程。也可以随时直接提问。', 'Take a complete tour from choosing a customer to exporting your proposal. You can also ask a question at any time.') }}</p><button class="btn primary" @click="start">{{ txt('开始界面导览 →', 'Start the tour →') }}</button><button class="btn sm" @click="welcome = false; remember()">{{ txt('自行探索', 'Explore on my own') }}</button></template>
-        <template v-else-if="active"><div class="progress"><span v-for="(_, i) in topics" :key="i" :class="{done: i <= step}"></span></div><span class="eyebrow">{{ step + 1 }} / {{ topics.length }}</span><h3>{{ active.title }}</h3><p>{{ active.a }}</p><button class="btn sm" @click="locate(active.target)">{{ txt('定位此功能 ↗', 'Show this feature ↗') }}</button><div class="tour-actions"><button class="btn sm" :disabled="step === 0" @click="advance(-1)">{{ txt('上一步', 'Back') }}</button><button class="btn primary sm" @click="advance(1)">{{ step === topics.length - 1 ? txt('完成导览 ✓', 'Finish tour ✓') : txt('下一步 →', 'Next →') }}</button></div></template>
-        <template v-else><p class="intro">{{ txt('你好！选择一个问题，或输入你想了解的操作。', 'Hello! Choose a question or ask how to use the quotation tool.') }}</p><div v-for="(message, i) in messages" :key="i" class="message" :class="message.role"><span class="eyebrow">{{ message.role === 'user' ? txt('你', 'YOU') : txt('学习助手', 'ASSISTANT') }}</span><p>{{ message.text }}</p></div></template>
+        <template v-if="welcome"><span class="badge">{{ txt('首次使用 · 约 5 分钟', 'FIRST VISIT · ABOUT 5 MIN') }}</span><h3>{{ txt('从第一份报价开始', 'Build your first quotation') }}</h3><p>{{ txt('学习新建与复制报价、UOM 配置、Billing Agent、版本切换、Sent 通知和 Archived 同步。', 'Learn quote creation and cloning, UOM configuration, the Billing Agent, version selection, Sent notifications and Archived synchronization.') }}</p><button class="btn primary" @click="start">{{ txt('开始界面导览 →', 'Start the tour →') }}</button><button class="btn sm" @click="welcome = false; remember()">{{ txt('自行探索', 'Explore on my own') }}</button></template>
+        <template v-else-if="active"><div class="progress"><span v-for="(_, i) in topics" :key="i" :class="{done: i <= step}"></span></div><span class="eyebrow">{{ step + 1 }} / {{ topics.length }}</span><h3>{{ active.title }}</h3><p>{{ active.a }}</p><div class="tour-actions"><button class="btn sm" :disabled="step === 0" @click="advance(-1)">{{ txt('上一步', 'Back') }}</button><button class="btn primary sm" @click="advance(1)">{{ step === topics.length - 1 ? txt('完成导览 ✓', 'Finish tour ✓') : txt('下一步 →', 'Next →') }}</button></div></template>
+        <template v-else><p class="intro">{{ txt('你好！选择一个问题，或输入你想了解的操作。', 'Hello! Choose a question or ask how to use the quotation tool.') }}</p><div v-for="(message, i) in messages" :key="i" class="message" :class="message.role"><span class="eyebrow">{{ message.role === 'user' ? txt('你', 'YOU') : txt('学习助手', 'ASSISTANT') }}</span><p>{{ message.topic ? (message.role === 'user' ? topics.find(t => t.target === message.topic)?.q : topics.find(t => t.target === message.topic)?.a) : message.text }}</p></div></template>
       </div>
       <details class="questions"><summary class="question-heading"><strong>{{ txt('常见问题', 'Quick questions') }}</strong><button class="text-button" @click="start">{{ txt('重新导览', 'Restart tour') }}</button></summary><div class="question-list"><button v-for="(topic,i) in topics" :key="topic.target" @click="ask(i)">{{ topic.q }} <span>↗</span></button></div></details>
       <form @submit.prevent="ask()"><input class="input" v-model="input" maxlength="500" :placeholder="txt('询问报价操作…', 'Ask about quotation steps…')" :aria-label="txt('输入问题', 'Your question')"/><button class="btn primary sm" :disabled="!input.trim()" type="submit">{{ txt('发送', 'Send') }}</button></form><p class="disclosure">{{ txt('基于操作知识库回答 · 特殊报价请向负责人确认', 'Answers from the training knowledge base · Confirm special rates with your quotation owner') }}</p>

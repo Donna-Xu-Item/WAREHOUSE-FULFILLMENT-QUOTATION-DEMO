@@ -12,4 +12,9 @@ Draft → Sent → Accepted → Archived。
 
 Demo 不连接 LLM 或真实后台。聊天有三个可交互案例，通知／同步均为浏览器内模拟；实际后端尚未被修改。
 
-详见 billing-item-governance.md。构建及 66 项测试通过。
+详见 billing-item-governance.md。构建及 69 项测试通过。
+
+
+## Agent 入口和语言更新
+
+从搜索／筛选栏右侧的 New billing item 按钮打开 Agent，关闭后保留对话。界面、示例、快捷回答及历史脚本回复随中英日西页面语言即时更新；用户自行输入的原文保持不变。AI Training 更新为18步，涵盖最新功能，逐步自动定位，移除了 Show this feature 按钮。
